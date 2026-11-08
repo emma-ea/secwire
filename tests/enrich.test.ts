@@ -155,7 +155,7 @@ describe("NVD throttle", () => {
     const clock = fakeClock(0);
     const t = new Throttle(1_000, clock);
     const order: number[] = [];
-    await Promise.all([1, 2, 3].map((n) => t.wait().then(() => order.push(clock.now()))));
+    await Promise.all([1, 2, 3].map(() => t.wait().then(() => order.push(clock.now()))));
     expect(order).toEqual([0, 1_000, 2_000]);
   });
 

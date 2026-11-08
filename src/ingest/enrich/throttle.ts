@@ -46,7 +46,7 @@ export class Throttle {
   constructor(
     private readonly spacingMs: number,
     private readonly clock: Clock = realClock,
-    private readonly backoff = NVD_BACKOFF_MS,
+    private readonly backoff: { initial: number; max: number } = NVD_BACKOFF_MS,
   ) {}
 
   /** Resolves when the caller may send its request, and books the slot. */
