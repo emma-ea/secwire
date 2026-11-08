@@ -6,6 +6,7 @@
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { PoolClient } from "pg";
+import type { PgBoss } from "pg-boss";
 import { getDb, getPool, schema, type Db } from "../db/client";
 import { cves, itemCves, items, sources } from "../db/schema";
 import { getEnv } from "../env";
@@ -35,6 +36,8 @@ export type RunSourceOptions = {
   fetcher?: AdapterContext["fetcher"];
   now?: Date;
   range?: AdapterContext["range"];
+  /** pg-boss instance for the post-ingest enrich/cluster jobs (default: the process sender). */
+  boss?: PgBoss;
 };
 
 export type RunSourceOutcome = RunSourceResult & {
@@ -104,8 +107,8 @@ export async function runSource(sourceId: string, opts: RunSourceOptions): Promi
           };
 
     if (opts.runId) await recordRunSourceResult(db, opts.runId, sourceId, outcome);
-    // After commit: Phase 2 enqueues enrich.cve / cluster.items here.
-    await afterIngest({ sourceId, newCveIds: persisted.newCveIds, itemIds: persisted.touchedItemIds });
+    // After commit (SPEC §6.2 step 5): enrich.cve for new CVEs, cluster.items for new items.
+    await afterIngest({ sourceId, newCveIds: persisted.newCveIds, itemIds: persisted.touchedItemIds }, { boss: opts.boss });
     return outcome;
   } finally {
     if (locked) {

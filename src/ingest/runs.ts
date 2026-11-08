@@ -214,3 +214,78 @@ export async function activeSourceIds(db: Db): Promise<Set<string>> {
 export function isTerminal(status: RunSourceStatus): boolean {
   return (TERMINAL_RUN_SOURCE_STATUSES as readonly string[]).includes(status);
 }
+
+// ---------------------------------------------------------------------------
+// Enrich / recluster runs: one job, no per-source rows. Their status is set
+// directly by the job handler (or the inline CLI path).
+// ---------------------------------------------------------------------------
+
+export type JobRunKind = "enrich" | "recluster";
+
+/** Job runs stuck in "running" longer than this are failed (longest job expiry is 30 min). */
+export const STALE_JOB_RUN_MINUTES = 45;
+
+export async function createJobRun(
+  db: Db,
+  input: { trigger: (typeof ingestionRuns.$inferInsert)["trigger"]; triggeredBy?: string | null; kind: JobRunKind; scope: Record<string, unknown> },
+): Promise<string> {
+  const [run] = await db
+    .insert(ingestionRuns)
+    .values({ trigger: input.trigger, triggeredBy: input.triggeredBy ?? null, kind: input.kind, scope: input.scope, status: "queued" })
+    .returning({ id: ingestionRuns.id });
+  return run!.id;
+}
+
+export async function markJobRunRunning(db: Db, runId: string): Promise<boolean> {
+  const r = await db
+    .update(ingestionRuns)
+    .set({ status: "running", startedAt: sql`coalesce(${ingestionRuns.startedAt}, now())` })
+    .where(and(eq(ingestionRuns.id, runId), inArray(ingestionRuns.status, ["queued", "running"])))
+    .returning({ id: ingestionRuns.id });
+  return r.length > 0;
+}
+
+export async function completeJobRun(
+  db: Db,
+  runId: string,
+  result: { status: Extract<RunStatus, "succeeded" | "failed" | "cancelled">; stats?: Record<string, unknown>; error?: string | null },
+): Promise<void> {
+  await db
+    .update(ingestionRuns)
+    .set({
+      status: result.status,
+      stats: result.stats ?? {},
+      error: result.error?.slice(0, 4000) ?? null,
+      finishedAt: sql`now()`,
+      startedAt: sql`coalesce(${ingestionRuns.startedAt}, now())`,
+    })
+    .where(and(eq(ingestionRuns.id, runId), inArray(ingestionRuns.status, ["queued", "running"])));
+}
+
+/** Records the error of an attempt that pg-boss will retry; the run stays "running". */
+export async function noteJobRunRetry(db: Db, runId: string, error: string, attempt: number): Promise<void> {
+  await db
+    .update(ingestionRuns)
+    .set({ error: `attempt ${attempt}: ${error}`.slice(0, 4000) })
+    .where(eq(ingestionRuns.id, runId));
+}
+
+/** Fails enrich/recluster runs left "running" by a crashed worker. Called on every tick and at startup. */
+export async function reconcileStaleJobRuns(db: Db): Promise<number> {
+  const r = await db
+    .update(ingestionRuns)
+    .set({
+      status: "failed",
+      error: sql`coalesce(${ingestionRuns.error} || ' — ', '') || ${`abandoned: no result after ${STALE_JOB_RUN_MINUTES} min (worker stopped or job expired)`}`,
+      finishedAt: sql`now()`,
+    })
+    .where(
+      and(
+        inArray(ingestionRuns.kind, ["enrich", "recluster"]),
+        eq(ingestionRuns.status, "running"),
+        sql`${ingestionRuns.startedAt} < now() - make_interval(mins => ${STALE_JOB_RUN_MINUTES})`,
+      ),
+    )
+    .returning({ id: ingestionRuns.id });
+  return r.length;
+}

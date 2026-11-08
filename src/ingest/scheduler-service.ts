@@ -24,7 +24,9 @@ import { getAdapter } from "./adapters";
 import { getSenderBoss, QUEUES, SCHEDULE_KEYS } from "./boss";
 import { cancelQueuedScheduledRuns } from "./cancel";
 
-/** Daily maintenance at 03:30 UTC (enrich.refresh takes 03:00 in Phase 2). */
+/** Daily NVD/EPSS refresh at 03:00 UTC (SPEC §7.5). */
+export const ENRICH_REFRESH_CRON = "0 3 * * *";
+/** Daily maintenance at 03:30 UTC, after the refresh has been enqueued. */
 export const PRUNE_CRON = "30 3 * * *";
 
 export type Settings = typeof appSettings.$inferSelect;
@@ -170,11 +172,15 @@ export async function isWorkerOnline(db: Db = getDb()): Promise<boolean> {
  * Applies app_settings to pg-boss schedules. Worker only. schedule() upserts
  * on (name, key) in pg-boss 12, so repeat calls overwrite in place.
  */
-export async function syncSchedules(boss: PgBoss, db: Db = getDb()): Promise<{ tick: string | null; prune: boolean }> {
+export async function syncSchedules(
+  boss: PgBoss,
+  db: Db = getDb(),
+): Promise<{ tick: string | null; enrichRefresh: boolean; prune: boolean }> {
   if (!getEnv().WORKER_SCHEDULES_ENABLED) {
     await boss.unschedule(QUEUES.tick, SCHEDULE_KEYS.tick);
+    await boss.unschedule(QUEUES.enrichRefresh, SCHEDULE_KEYS.enrichRefresh);
     await boss.unschedule(QUEUES.prune, SCHEDULE_KEYS.prune);
-    return { tick: null, prune: false };
+    return { tick: null, enrichRefresh: false, prune: false };
   }
   const s = await getSettings(db);
   let tick: string | null = null;
@@ -184,9 +190,13 @@ export async function syncSchedules(boss: PgBoss, db: Db = getDb()): Promise<{ t
   } else {
     await boss.unschedule(QUEUES.tick, SCHEDULE_KEYS.tick);
   }
-  // enrich_refresh_enabled → enrich.refresh schedule arrives with the queue in Phase 2.
+  if (s.enrichRefreshEnabled) {
+    await boss.schedule(QUEUES.enrichRefresh, ENRICH_REFRESH_CRON, {}, { tz: "UTC", key: SCHEDULE_KEYS.enrichRefresh });
+  } else {
+    await boss.unschedule(QUEUES.enrichRefresh, SCHEDULE_KEYS.enrichRefresh);
+  }
   await boss.schedule(QUEUES.prune, PRUNE_CRON, {}, { tz: "UTC", key: SCHEDULE_KEYS.prune });
-  return { tick, prune: true };
+  return { tick, enrichRefresh: s.enrichRefreshEnabled, prune: true };
 }
 
 /** Enabled sources whose effective interval has elapsed (with the 2-min grace). */

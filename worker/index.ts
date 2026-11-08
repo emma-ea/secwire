@@ -8,9 +8,27 @@ import path from "node:path";
 import type { Job } from "pg-boss";
 import { closeDb, getDb } from "../src/db/client";
 import { getEnv } from "../src/env";
-import { createWorkerBoss, ensureQueues, QUEUES, type IngestSourceJob } from "../src/ingest/boss";
-import { handlePrune, handleSchedulerSync, handleSourceJob, handleTick } from "../src/ingest/handlers";
-import { reconcileStaleRunSources } from "../src/ingest/runs";
+import {
+  createWorkerBoss,
+  ensureQueues,
+  QUEUES,
+  type ClusterJob,
+  type EnrichCveJob,
+  type EnrichRefreshJob,
+  type IngestSourceJob,
+} from "../src/ingest/boss";
+import { nvdSpacingMs } from "../src/ingest/enrich/throttle";
+import {
+  handleClusterJob,
+  handleEnrichCveJob,
+  handleEnrichRefreshJob,
+  handlePrune,
+  handleSchedulerSync,
+  handleSourceJob,
+  handleTick,
+} from "../src/ingest/handlers";
+import { enqueueClusterIfPending } from "../src/ingest/hooks";
+import { reconcileStaleJobRuns, reconcileStaleRunSources } from "../src/ingest/runs";
 import {
   HEARTBEAT_INTERVAL_MS,
   pruneHeartbeats,
@@ -55,6 +73,8 @@ async function main() {
   if (pruned > 0) log(`pruned ${pruned} stale heartbeat row(s)`);
   const stale = await reconcileStaleRunSources(db);
   if (stale > 0) log(`marked ${stale} abandoned run-source row(s) as failed`);
+  const staleJobs = await reconcileStaleJobRuns(db);
+  if (staleJobs > 0) log(`marked ${staleJobs} abandoned enrich/recluster run(s) as failed`);
 
   // --- Handlers -----------------------------------------------------------
 
@@ -76,6 +96,33 @@ async function main() {
     await handleSchedulerSync(boss);
   });
 
+  // NVD allows 5 req/30s without a key: one job at a time behind the throttle (SPEC §6.6).
+  await boss.work<EnrichCveJob>(QUEUES.enrichCve, { localConcurrency: 1 }, async ([job]: Job<EnrichCveJob>[]) => {
+    if (!job) return;
+    const r = await handleEnrichCveJob(job);
+    if (r) {
+      log(
+        `enrich ${r.cveId}: NVD ${r.nvd}${r.cvssScore !== null ? ` (CVSS ${r.cvssScore})` : ""}, EPSS ${r.epssUpdated} scored${r.epssError ? ` (EPSS error: ${r.epssError})` : ""}, ${r.storiesRefreshed} stor${r.storiesRefreshed === 1 ? "y" : "ies"} refreshed`,
+      );
+    }
+  });
+
+  await boss.work<EnrichRefreshJob>(QUEUES.enrichRefresh, { localConcurrency: 1 }, async ([job]: Job<EnrichRefreshJob>[]) => {
+    if (!job) return;
+    const r = await handleEnrichRefreshJob(job, { boss });
+    if (r) log(`enrich.refresh → NVD ${r.nvdQueued} queued (${r.nvdAlreadyQueued} already), EPSS ${r.epssScored}/${r.epssTargets}`);
+  });
+
+  await boss.work<ClusterJob>(QUEUES.cluster, { localConcurrency: 1 }, async ([job]: Job<ClusterJob>[]) => {
+    if (!job) return;
+    const r = await handleClusterJob(job);
+    if (r.processed > 0 || job.data.since) {
+      log(
+        `${job.data.since ? `recluster since ${job.data.since}` : "cluster"} → ${r.processed} item(s): ${r.joinedByUrl} by URL, ${r.joinedByCve} by CVE, ${r.created} new stor${r.created === 1 ? "y" : "ies"}`,
+      );
+    }
+  });
+
   await boss.work(QUEUES.prune, { localConcurrency: 1 }, async () => {
     const r = await handlePrune();
     log(`prune → ${r.runs} run(s), ${r.logins} login attempt(s), ${r.heartbeats} heartbeat(s)`);
@@ -83,6 +130,8 @@ async function main() {
 
   // Database settings win over whatever schedules exist (SPEC §7.5).
   await handleSchedulerSync(boss);
+  // Cluster anything left unassigned (e.g. items ingested by an older version).
+  if (await enqueueClusterIfPending({ boss })) log("queued cluster.items for unassigned items");
   if (!env.WORKER_SCHEDULES_ENABLED) log("WORKER_SCHEDULES_ENABLED=false — no schedules; use POST /api/ingest");
 
   // --- Heartbeat ----------------------------------------------------------
@@ -97,7 +146,9 @@ async function main() {
   };
   await beat();
   const timer = setInterval(() => void beat(), HEARTBEAT_INTERVAL_MS);
-  log(`heartbeat every ${HEARTBEAT_INTERVAL_MS / 1000}s; source concurrency ${SOURCE_CONCURRENCY}`);
+  log(
+    `heartbeat every ${HEARTBEAT_INTERVAL_MS / 1000}s; source concurrency ${SOURCE_CONCURRENCY}; NVD spacing ${nvdSpacingMs(Boolean(env.NVD_API_KEY)) / 1000}s (${env.NVD_API_KEY ? "with" : "no"} API key)`,
+  );
 
   // --- Shutdown -----------------------------------------------------------
 

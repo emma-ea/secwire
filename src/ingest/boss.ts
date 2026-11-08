@@ -13,10 +13,12 @@ export const QUEUES = {
   schedulerSync: "scheduler.sync",
   source: "ingest.source",
   prune: "maintenance.prune",
+  enrichCve: "enrich.cve",
+  enrichRefresh: "enrich.refresh",
+  cluster: "cluster.items",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
-/** Phase 2 adds enrich.cve, enrich.refresh and cluster.items. */
 export const QUEUE_DEFINITIONS: Record<QueueName, Omit<Queue, "name">> = {
   [QUEUES.tick]: { policy: "exclusive", retryLimit: 0, expireInSeconds: 300 },
   [QUEUES.schedulerSync]: { policy: "exclusive", retryLimit: 5, retryDelay: 10, retryBackoff: true },
@@ -29,14 +31,37 @@ export const QUEUE_DEFINITIONS: Record<QueueName, Omit<Queue, "name">> = {
     expireInSeconds: 600,
   },
   [QUEUES.prune]: { policy: "exclusive", retryLimit: 2 },
+  // At most one queued + one active job per CVE (singletonKey = cveId). The
+  // worker runs it at concurrency 1 behind an NVD throttle; rate-limit
+  // responses throw and retry with backoff. Expiry allows for throttle waits.
+  [QUEUES.enrichCve]: {
+    policy: "stately",
+    retryLimit: 5,
+    retryDelay: 60,
+    retryBackoff: true,
+    expireInSeconds: 900,
+  },
+  [QUEUES.enrichRefresh]: { policy: "exclusive", retryLimit: 2, retryDelay: 300, expireInSeconds: 1800 },
+  // Pipeline jobs have no key, so one queued + one active at a time; recluster
+  // jobs use RECLUSTER_SINGLETON_KEY so a queued pipeline job can't swallow
+  // them. Both serialize on the story advisory lock.
+  [QUEUES.cluster]: { policy: "stately", retryLimit: 3, retryDelay: 15, retryBackoff: true, expireInSeconds: 1800 },
 };
+
+export const RECLUSTER_SINGLETON_KEY = "recluster";
 
 export const SCHEDULE_KEYS = {
   tick: "ingest-tick",
   prune: "maintenance-prune",
+  enrichRefresh: "enrich-refresh",
 } as const;
 
 export type IngestSourceJob = { runId: string; sourceId: string; force: boolean };
+/** `epss: false` when the caller batches EPSS itself (daily refresh). `runId` only for admin/CLI requests. */
+export type EnrichCveJob = { cveId: string; runId?: string; epss?: boolean };
+export type EnrichRefreshJob = { runId?: string };
+/** `since` (ISO) makes it a recluster. */
+export type ClusterJob = { runId?: string; since?: string };
 
 function attachErrorLogger(boss: PgBoss, label: string): PgBoss {
   boss.on("error", (err) => console.error(`[pg-boss:${label}] error:`, err));

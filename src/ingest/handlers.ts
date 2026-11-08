@@ -6,9 +6,19 @@ import { eq, lt, sql } from "drizzle-orm";
 import type { Job, PgBoss } from "pg-boss";
 import { getDb } from "../db/client";
 import { appSettings, ingestionRuns, loginAttempts, sources, workerHeartbeats } from "../db/schema";
-import { QUEUE_DEFINITIONS, QUEUES, type IngestSourceJob } from "./boss";
+import { QUEUE_DEFINITIONS, QUEUES, type ClusterJob, type EnrichCveJob, type EnrichRefreshJob, type IngestSourceJob } from "./boss";
+import { InvalidCveIdError, type EnrichDeps } from "./enrich/service";
+import { enqueueClusterIfPending } from "./hooks";
 import { runSource, type RunSourceOptions } from "./run-source";
-import { reconcileStaleRunSources, recordRunSourceResult } from "./runs";
+import {
+  completeJobRun,
+  createJobRun,
+  noteJobRunRetry,
+  reconcileStaleJobRuns,
+  reconcileStaleRunSources,
+  recordRunSourceResult,
+} from "./runs";
+import { runCluster, runEnrichCve, runRefresh } from "./trigger-jobs";
 import { findDueSources, getSettings, syncSchedules } from "./scheduler-service";
 import { triggerIngestion } from "./trigger";
 
@@ -19,6 +29,9 @@ export async function handleTick(now = new Date()): Promise<{ runId: string | nu
   const db = getDb();
   await db.update(appSettings).set({ lastTickAt: now }).where(eq(appSettings.id, true));
   await reconcileStaleRunSources(db);
+  await reconcileStaleJobRuns(db);
+  // Self-healing: items whose post-ingest cluster job was lost still get clustered.
+  await enqueueClusterIfPending().catch((err: unknown) => console.error("[tick] cluster enqueue failed:", err));
 
   const settings = await getSettings(db);
   if (!settings.schedulerEnabled) return { runId: null, due: [] };
@@ -83,8 +96,73 @@ export async function handleSourceJob(
 
 export async function handleSchedulerSync(boss: PgBoss) {
   const r = await syncSchedules(boss);
-  console.log(`[worker] scheduler.sync → tick ${r.tick ?? "unscheduled"}, prune ${r.prune ? "scheduled" : "unscheduled"}`);
+  console.log(
+    `[worker] scheduler.sync → tick ${r.tick ?? "unscheduled"}, enrich.refresh ${r.enrichRefresh ? "scheduled" : "unscheduled"}, prune ${r.prune ? "scheduled" : "unscheduled"}`,
+  );
   return r;
+}
+
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 1000);
+
+type JobLike<T> = Pick<Job<T>, "data" | "retryCount" | "signal">;
+
+/**
+ * Shared retry bookkeeping for job runs: throw so pg-boss retries; the run
+ * row only turns "failed" on the final attempt.
+ */
+async function withJobRun<T>(
+  queue: keyof typeof QUEUE_DEFINITIONS,
+  job: JobLike<{ runId?: string }>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const runId = job.data.runId;
+    if (runId) {
+      const db = getDb();
+      const final = job.retryCount >= (QUEUE_DEFINITIONS[queue].retryLimit ?? 0);
+      if (final) await completeJobRun(db, runId, { status: "failed", error: errorMessage(err) }).catch(() => {});
+      else await noteJobRunRetry(db, runId, errorMessage(err), job.retryCount + 1).catch(() => {});
+    }
+    throw err;
+  }
+}
+
+/** enrich.cve: NVD (throttled) + EPSS for one CVE. Rate limits and network errors throw → retry with backoff. */
+export async function handleEnrichCveJob(job: JobLike<EnrichCveJob>, deps: Omit<EnrichDeps, "signal"> = {}) {
+  try {
+    return await withJobRun(QUEUES.enrichCve, job, () =>
+      runEnrichCve(getDb(), job.data.runId, job.data, { ...deps, signal: job.signal }),
+    );
+  } catch (err) {
+    // A malformed id will never succeed: don't retry it.
+    if (err instanceof InvalidCveIdError) return null;
+    throw err;
+  }
+}
+
+/** enrich.refresh: scheduled daily at 03:00 UTC (if enabled), or requested by admin/CLI with a runId. */
+export async function handleEnrichRefreshJob(
+  job: JobLike<EnrichRefreshJob>,
+  opts: { boss?: PgBoss; deps?: EnrichDeps } = {},
+) {
+  const db = getDb();
+  let runId = job.data.runId;
+  if (!runId) {
+    // Scheduled: respect the toggle in case it changed after the job was created.
+    if (!(await getSettings(db)).enrichRefreshEnabled) return null;
+    runId = await createJobRun(db, { trigger: "schedule", triggeredBy: "scheduler", kind: "enrich", scope: { mode: "refresh" } });
+  }
+  const id = runId;
+  return withJobRun(QUEUES.enrichRefresh, { ...job, data: { runId: id } }, () =>
+    runRefresh(db, id, { inline: false, boss: opts.boss, deps: { ...opts.deps, signal: job.signal } }),
+  );
+}
+
+/** cluster.items: clusters unassigned items, or reclusters when `since` is set. */
+export async function handleClusterJob(job: JobLike<ClusterJob>) {
+  return withJobRun(QUEUES.cluster, job, () => runCluster(getDb(), job.data.runId, job.data));
 }
 
 /** maintenance.prune: old runs (cascade to run sources), login attempts, dead heartbeats. */

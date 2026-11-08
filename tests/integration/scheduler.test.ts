@@ -35,9 +35,10 @@ const schedules = async () =>
 const minutesAgo = (m: number, from = new Date()) => new Date(from.getTime() - m * 60_000);
 
 describe("scheduler.sync (SPEC §7.5)", () => {
-  it("a fresh install schedules ingest.tick every 15 min (UTC) and the daily prune", async () => {
+  it("a fresh install schedules ingest.tick every 15 min (UTC), the daily enrich refresh and prune", async () => {
     await syncSchedules(boss);
     expect(await schedules()).toEqual([
+      { name: QUEUES.enrichRefresh, key: "enrich-refresh", cron: "0 3 * * *", timezone: "UTC" },
       { name: QUEUES.tick, key: "ingest-tick", cron: "*/15 * * * *", timezone: "UTC" },
       { name: QUEUES.prune, key: "maintenance-prune", cron: "30 3 * * *", timezone: "UTC" },
     ]);
@@ -56,10 +57,10 @@ describe("scheduler.sync (SPEC §7.5)", () => {
     await syncSchedules(boss);
     await updateSchedulerSettings({ enabled: false }, "admin", { boss });
     await syncSchedules(boss);
-    expect((await schedules()).map((s) => s.name)).toEqual([QUEUES.prune]);
+    expect((await schedules()).map((s) => s.name)).toEqual([QUEUES.enrichRefresh, QUEUES.prune]);
     // Restarting the worker re-syncs from the DB: still paused.
     await syncSchedules(boss);
-    expect((await schedules()).map((s) => s.name)).toEqual([QUEUES.prune]);
+    expect((await schedules()).map((s) => s.name)).toEqual([QUEUES.enrichRefresh, QUEUES.prune]);
   });
 
   it("rejects non-preset intervals with nothing saved", async () => {
