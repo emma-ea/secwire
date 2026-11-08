@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { WORKER_OFFLINE_AFTER_SEC } from "./scheduler";
+import { nextRunAt, WORKER_OFFLINE_AFTER_SEC } from "./scheduler";
 
 /** Raw facts read from the DB in a single round trip. */
 export type HealthSnapshot = {
@@ -10,6 +10,10 @@ export type HealthSnapshot = {
     schedulerIntervalMinutes: number;
     lastTickAt: Date | null;
   } | null;
+  /** Ready + active jobs per pg-boss queue; null when pg-boss couldn't be reached. */
+  queues?: Record<string, number> | null;
+  /** WORKER_SCHEDULES_ENABLED=false → no internal schedule, so no nextRunAt. */
+  managedExternally?: boolean;
 };
 
 export type HealthBody = {
@@ -64,10 +68,12 @@ export async function readHealthSnapshot(db: Db): Promise<HealthSnapshot> {
  * response. Only an unreachable DB is a 503; a stale worker is reported in the
  * body but the web app itself is still healthy.
  *
- * Phase 0: `nextRunAt` is null and `queues` is empty — both arrive in Phase 1
- * with the scheduler module and the web-side pg-boss client.
+ * `nextRunAt` is null when the scheduler is paused or managed externally.
  */
-export function buildHealth(snapshot: HealthSnapshot | Error): {
+export function buildHealth(
+  snapshot: HealthSnapshot | Error,
+  now: Date = new Date(),
+): {
   status: 200 | 503;
   body: HealthBody;
 } {
@@ -88,6 +94,8 @@ export function buildHealth(snapshot: HealthSnapshot | Error): {
     };
   }
 
+  const st = snapshot.settings;
+  const scheduled = st?.schedulerEnabled === true && !snapshot.managedExternally;
   const age =
     snapshot.lastBeatAgeSec === null
       ? null
@@ -105,9 +113,9 @@ export function buildHealth(snapshot: HealthSnapshot | Error): {
         enabled: snapshot.settings?.schedulerEnabled ?? null,
         intervalMinutes: snapshot.settings?.schedulerIntervalMinutes ?? null,
         lastTickAt: snapshot.settings?.lastTickAt?.toISOString() ?? null,
-        nextRunAt: null,
+        nextRunAt: scheduled && st ? nextRunAt(st.schedulerIntervalMinutes, now).toISOString() : null,
       },
-      queues: {},
+      queues: snapshot.queues ?? {},
     },
   };
 }

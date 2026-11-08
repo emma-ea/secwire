@@ -9,7 +9,10 @@ const settings = {
 
 describe("buildHealth", () => {
   it("reports db ok and an online worker with a fresh heartbeat", () => {
-    const { status, body } = buildHealth({ lastBeatAgeSec: 12.4, settings });
+    const { status, body } = buildHealth(
+      { lastBeatAgeSec: 12.4, settings, queues: { "ingest.source": 3 } },
+      new Date("2026-11-08T12:07:00Z"),
+    );
     expect(status).toBe(200);
     expect(body).toEqual({
       db: "ok",
@@ -18,10 +21,16 @@ describe("buildHealth", () => {
         enabled: true,
         intervalMinutes: 15,
         lastTickAt: "2026-11-08T12:00:00.000Z",
-        nextRunAt: null,
+        nextRunAt: "2026-11-08T12:15:00.000Z",
       },
-      queues: {},
+      queues: { "ingest.source": 3 },
     });
+  });
+
+  it("has no nextRunAt when paused or managed externally", () => {
+    const now = new Date("2026-11-08T12:07:00Z");
+    expect(buildHealth({ lastBeatAgeSec: 1, settings: { ...settings, schedulerEnabled: false } }, now).body.scheduler.nextRunAt).toBeNull();
+    expect(buildHealth({ lastBeatAgeSec: 1, settings, managedExternally: true }, now).body.scheduler.nextRunAt).toBeNull();
   });
 
   it("marks the worker offline after 90s but stays 200", () => {

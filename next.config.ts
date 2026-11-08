@@ -1,17 +1,12 @@
 import type { NextConfig } from "next";
 
-// Phase 0 security headers (SPEC §10). A full CSP with script-src nonces is
-// added in Phase 1 alongside proxy.ts — see DECISIONS.md. The directives below
-// don't affect Next's inline hydration scripts, so they're safe to ship now.
+// Security headers (SPEC §10). Pages get a per-request nonce CSP from
+// src/proxy.ts; this static CSP covers everything the proxy doesn't match
+// (API routes, static assets).
 const securityHeaders = [
   {
     key: "Content-Security-Policy",
-    value: [
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "object-src 'none'",
-      "form-action 'self'",
-    ].join("; "),
+    value: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
   },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -23,8 +18,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  cacheComponents: true,
-  partialPrefetching: true,
+  // Off: every page reads Postgres per request and needs a CSP nonce, which
+  // Cache Components' prerendered static shell can't carry. See DECISIONS.md.
+  cacheComponents: false,
   poweredByHeader: false,
   turbopack: {
     rules: {
@@ -35,7 +31,11 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      // Pages: proxy.ts sets the nonce CSP; don't send a second, conflicting one.
+      { source: "/((?!api/|_next/).*)", headers: securityHeaders.filter((h) => h.key !== "Content-Security-Policy") },
+      { source: "/(api|_next)/:path*", headers: securityHeaders },
+    ];
   },
 };
 
