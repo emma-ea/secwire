@@ -35,7 +35,27 @@ export const SEED_SOURCES: Seed[] = [
     url: "https://hn.algolia.com/api/v1/search_by_date",
     config: { queries: HN_DEFAULT_QUERIES, minPoints: HN_DEFAULT_MIN_POINTS },
   },
+  // Phase 3: curated researcher/journalist accounts (no auth). Posts are kept
+  // only when they mention a CVE, or link out and match a security keyword.
+  ...social("bluesky", [
+    ["bsky-campuscodi", "Catalin Cimpanu (Bluesky)", "https://bsky.app/profile/campuscodi.risky.biz"],
+    ["bsky-zackwhittaker", "Zack Whittaker (Bluesky)", "https://bsky.app/profile/zackwhittaker.com"],
+    ["bsky-lorenzofb", "Lorenzo Franceschi-Bicchierai (Bluesky)", "https://bsky.app/profile/lorenzofb.bsky.social"],
+    ["bsky-dangoodin", "Dan Goodin (Bluesky)", "https://bsky.app/profile/dangoodin.bsky.social"],
+    ["bsky-doublepulsar", "Kevin Beaumont (Bluesky)", "https://bsky.app/profile/doublepulsar.com"],
+  ]),
+  ...social("mastodon", [
+    ["masto-briankrebs", "Brian Krebs (Mastodon)", "https://infosec.exchange/@briankrebs"],
+    ["masto-wdormann", "Will Dormann (Mastodon)", "https://infosec.exchange/@wdormann"],
+    ["masto-gossithedog", "Kevin Beaumont (Mastodon)", "https://cyberplace.social/@GossiTheDog"],
+    ["masto-sans-isc", "SANS ISC (Mastodon)", "https://infosec.exchange/@sans_isc"],
+    ["masto-watchtowr", "watchTowr (Mastodon)", "https://infosec.exchange/@watchTowr"],
+  ]),
 ];
+
+function social(type: "bluesky" | "mastodon", accounts: Array<[string, string, string]>): Seed[] {
+  return accounts.map(([id, name, url]) => ({ id, name, type, category: "social" as const, url, config: { filter: "relevant" } }));
+}
 
 // SPEC §9 lists cisa-advisories as .../all.xml, but that feed embeds full
 // advisory HTML and is ~5.7 MB decompressed, over safe-fetch's 5 MB cap.

@@ -13,6 +13,8 @@ export async function generateMetadata({ params }: PageProps<"/story/[id]">): Pr
 }
 
 /** SPEC §8: CVE panels with full enrichment, then every item in time order. */
+const NETWORK_NAMES: Record<string, string> = { bluesky: "Bluesky", mastodon: "Mastodon", x: "X" };
+
 export default async function StoryPage({ params }: PageProps<"/story/[id]">) {
   const data = await getStory((await params).id);
   if (!data) notFound();
@@ -76,6 +78,13 @@ export default async function StoryPage({ params }: PageProps<"/story/[id]">) {
                   </ExternalLink>
                   {i.points !== null && ` · ${i.points} points`}
                   {i.comments !== null && ` · ${i.comments} comments`}
+                </p>
+              )}
+              {i.post_url && i.post_url !== i.url && (
+                <p className="mt-0.5 text-xs text-muted">
+                  <ExternalLink href={i.post_url} className="text-accent hover:underline">
+                    Post on {NETWORK_NAMES[i.network ?? ""] ?? "social media"}
+                  </ExternalLink>
                 </p>
               )}
             </li>

@@ -29,6 +29,13 @@
       "when": 1794163719194,
       "tag": "0003_phase2_enrichment_stories",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794173232310,
+      "tag": "0004_phase3_social_sources",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,304 @@
+{
+ "feed": [
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000001",
+    "cid": "bafy3kaaa0000001",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "Ransomware gang hits a hospital chain across three states\n\nMore details in the story.",
+     "createdAt": "2026-11-08T09:00:00.000Z",
+     "langs": [
+      "en"
+     ]
+    },
+    "indexedAt": "2026-11-08T09:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3,
+    "embed": {
+     "$type": "app.bsky.embed.external#view",
+     "external": {
+      "uri": "https://news.example.com/2026/11/hospital-ransomware?utm_source=bsky",
+      "title": "Hospital chain hit by ransomware",
+      "description": "A ransomware attack disrupted..."
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000002",
+    "cid": "bafy3kaaa0000002",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "Great long read about warehouse robots",
+     "createdAt": "2026-11-08T08:00:00.000Z",
+     "langs": [
+      "en"
+     ]
+    },
+    "indexedAt": "2026-11-08T08:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3,
+    "embed": {
+     "$type": "app.bsky.embed.external#view",
+     "external": {
+      "uri": "https://www.example.org/robots",
+      "title": "Robots in the warehouse",
+      "description": ""
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000003",
+    "cid": "bafy3kaaa0000003",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "Seeing mass scanning for CVE-2026-12345 since this morning.",
+     "createdAt": "2026-11-08T07:00:00.000Z",
+     "langs": [
+      "en"
+     ]
+    },
+    "indexedAt": "2026-11-08T07:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:zzzzzzzzzzzzzzzzzzzzzzzz/app.bsky.feed.post/3kaaa0000004",
+    "cid": "bafy3kaaa0000004",
+    "author": {
+     "did": "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz",
+     "handle": "someone.bsky.social",
+     "displayName": "Someone"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "Zero-day exploited in the wild, patch now",
+     "createdAt": "2026-11-08T06:00:00.000Z",
+     "langs": [
+      "en"
+     ]
+    },
+    "indexedAt": "2026-11-08T06:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3,
+    "embed": {
+     "$type": "app.bsky.embed.external#view",
+     "external": {
+      "uri": "https://vendor.example.com/advisory",
+      "title": "Advisory",
+      "description": ""
+     }
+    }
+   },
+   "reason": {
+    "$type": "app.bsky.feed.defs#reasonRepost",
+    "by": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "indexedAt": "2026-11-08T06:30:00.000Z"
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000005",
+    "cid": "bafy3kaaa0000005",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "The exploit is public now https://github.com/x/y",
+     "createdAt": "2026-11-08T05:00:00.000Z",
+     "langs": [
+      "en"
+     ],
+     "facets": [
+      {
+       "index": {
+        "byteStart": 0,
+        "byteEnd": 10
+       },
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://github.com/x/y"
+        }
+       ]
+      }
+     ],
+     "reply": {
+      "root": {
+       "uri": "at://x/app.bsky.feed.post/1",
+       "cid": "c"
+      },
+      "parent": {
+       "uri": "at://x/app.bsky.feed.post/1",
+       "cid": "c"
+      }
+     }
+    },
+    "indexedAt": "2026-11-08T05:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000006",
+    "cid": "bafy3kaaa0000006",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "New by me:",
+     "createdAt": "2026-11-08T04:00:00.000Z",
+     "langs": [
+      "en"
+     ]
+    },
+    "indexedAt": "2026-11-08T04:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3,
+    "embed": {
+     "$type": "app.bsky.embed.external#view",
+     "external": {
+      "uri": "https://blog.example.net/vendor-hacked",
+      "title": "Software vendor hacked to push malicious update",
+      "description": ""
+     }
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000007",
+    "cid": "bafy3kaaa0000007",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "Vendor confirms breach of customer support portal www.example.com/sec...",
+     "createdAt": "2026-11-08T03:00:00.000Z",
+     "langs": [
+      "en"
+     ],
+     "facets": [
+      {
+       "index": {
+        "byteStart": 0,
+        "byteEnd": 10
+       },
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://www.example.com/security/incident-2026"
+        }
+       ]
+      }
+     ]
+    },
+    "indexedAt": "2026-11-08T03:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000008",
+    "cid": "bafy3kaaa0000008",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "This malware thread is worth reading",
+     "createdAt": "2026-11-08T02:00:00.000Z",
+     "langs": [
+      "en"
+     ],
+     "facets": [
+      {
+       "index": {
+        "byteStart": 0,
+        "byteEnd": 10
+       },
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://bsky.app/profile/someone.bsky.social/post/3kzzz"
+        }
+       ]
+      }
+     ]
+    },
+    "indexedAt": "2026-11-08T02:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/3kaaa0000009",
+    "cid": "bafy3kaaa0000009",
+    "author": {
+     "did": "did:plc:abcdefghijklmnopqrstuvwx",
+     "handle": "researcher.example.com",
+     "displayName": "Ada Researcher"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "text": "Patch details are out",
+     "createdAt": "2026-11-08T01:00:00.000Z",
+     "langs": [
+      "en"
+     ]
+    },
+    "indexedAt": "2026-11-08T01:00:00.000Z",
+    "likeCount": 12,
+    "repostCount": 3,
+    "embed": {
+     "$type": "app.bsky.embed.external#view",
+     "external": {
+      "uri": "https://nvd.nist.gov/vuln/detail/CVE-2026-99999",
+      "title": "NVD - CVE-2026-99999",
+      "description": ""
+     }
+    }
+   }
+  }
+ ],
+ "cursor": "2026-11-08T01:00:00.000Z"
+}

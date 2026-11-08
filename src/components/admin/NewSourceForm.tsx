@@ -7,7 +7,15 @@ import type { TestSourceResult } from "@/ingest/test-source";
 import { btn, btnPrimary, input } from "../ui";
 import { TestPreview } from "./TestPreview";
 
-const TYPES = ["rss", "hackernews", "cisa_kev"] as const;
+const TYPES = ["rss", "hackernews", "cisa_kev", "bluesky", "mastodon"] as const;
+const URL_PLACEHOLDER: Record<(typeof TYPES)[number], string> = {
+  rss: "https://example.com/feed.xml",
+  hackernews: "https://hn.algolia.com/api/v1/search_by_date",
+  cisa_kev: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+  bluesky: "https://bsky.app/profile/handle.example.com",
+  mastodon: "https://infosec.exchange/@user",
+};
+const SOCIAL = new Set<string>(["bluesky", "mastodon"]);
 const CATEGORIES = ["news", "research", "advisory", "community", "social"] as const;
 const HN_DEFAULT_QUERIES = "CVE, vulnerability, zero-day, exploit, ransomware, breach, RCE";
 
@@ -78,7 +86,11 @@ export function NewSourceForm() {
         </label>
         <label className={field}>
           <span className="text-muted">Type</span>
-          <select className={input} value={type} onChange={(e) => setType(e.target.value as (typeof TYPES)[number])}>
+          <select className={input} value={type} onChange={(e) => {
+              const t = e.target.value as (typeof TYPES)[number];
+              setType(t);
+              if (SOCIAL.has(t)) setCategory("social");
+            }}>
             {TYPES.map((t) => (
               <option key={t}>{t}</option>
             ))}
@@ -93,13 +105,18 @@ export function NewSourceForm() {
           </select>
         </label>
         <label className={`${field} sm:col-span-2`}>
-          <span className="text-muted">Feed / API URL</span>
-          <input className={`${input} font-mono`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/feed.xml" />
+          <span className="text-muted">{SOCIAL.has(type) ? "Profile URL" : "Feed / API URL"}</span>
+          <input className={`${input} font-mono`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder={URL_PLACEHOLDER[type]} />
         </label>
         <label className={field}>
           <span className="text-muted">Minimum interval override (minutes, optional)</span>
           <input className={`${input} font-mono`} inputMode="numeric" value={override} onChange={(e) => setOverride(e.target.value)} placeholder="—" />
         </label>
+        {SOCIAL.has(type) && (
+          <p className="text-xs text-muted sm:col-span-2">
+            Only posts that mention a CVE, or link out and match a security keyword, are kept. Replies and reposts are skipped.
+          </p>
+        )}
         {type === "hackernews" && (
           <>
             <label className={`${field} sm:col-span-2`}>

@@ -437,3 +437,32 @@ Also checked by hand (Phase 1):
 - Every `<script>` carries the nonce, and every external link has
   `rel="noopener noreferrer"`.
 - The SSRF guard blocks `169.254.169.254` from the add-source Test.
+
+## Phase 3 — Social sources, X, AI summaries, watchlists
+
+The SPEC gives Phase 3 no acceptance criteria. These were agreed at the start of the phase:
+- A Bluesky or Mastodon post that links to an article joins that article's story.
+- X refuses to fetch once the monthly cap is reached, and does nothing while its flag is off.
+- A story gets one summary, and a new one only when items join.
+- A matching story sends exactly one alert per watchlist, plus one more if it later becomes KEV, including when the scan re-runs.
+
+New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (with `@types/nodemailer`).
+
+### Bluesky and Mastodon (migration 0004)
+- **Source URL is the profile page.**
+  - Bluesky: `https://bsky.app/profile/<handle>`. The adapter calls the public AppView `app.bsky.feed.getAuthorFeed` (no auth) with `filter=posts_no_replies&limit=50`.
+  - Mastodon: `https://instance/@user`. The adapter reads `/@user.rss`, which already leaves out replies and boosts.
+  - Admins paste the URL they see in a browser.
+- **What is kept.** Reposts, pins, replies and quote paragraphs (`<p class="quote-inline">RE: …`) are skipped. A post is kept only when it:
+  - mentions a CVE (in its text, its link or the link preview), or
+  - links to an outside page and its text or link preview matches a security keyword (`SECURITY_KEYWORDS` in `src/ingest/adapters/social.ts`, whole words, plurals allowed).
+- **Why keywords and not "any link".** The plan said "CVE or link". Real timelines showed links alone are mostly off-topic: newspaper features, YouTube, politics. With keywords, 5 of 50 of one journalist's posts survive, and all are on-topic. `config.filter: "all"` turns the filter off; `config.keywords` replaces the list.
+- **What doesn't count as a link.** Links to the network itself are not articles: bsky.app, the account's own instance, mentions and hashtags.
+- **URLs mirror HN.** The item URL is the linked article, so the post joins the article's story by rule 1. `raw.postUrl` keeps the permalink, which the story page shows as "Post on Bluesky/Mastodon". A post with no link uses its permalink.
+- **Title** is the post's first line with bare URLs removed, at most 140 characters, so Mastodon's link text doesn't end up in titles.
+- **14-day lookback.** Posts older than 14 days are ignored, so a new account's first sync doesn't import months of timeline.
+- **Conditional GET.** Bluesky has none, so it always returns `ok` and items dedupe on the `at://` URI. Mastodon RSS sends ETags and gets 304s.
+- **Curated accounts** are seeded through `pnpm db:seed` with the usual verification; all 10 verified on 2026-11-08.
+  - Bluesky: Catalin Cimpanu, Zack Whittaker, Lorenzo Franceschi-Bicchierai, Dan Goodin, Kevin Beaumont.
+  - Mastodon: Brian Krebs, Will Dormann, Kevin Beaumont, SANS ISC, watchTowr.
+  - Accounts I rejected: `briankrebs.bsky.social` (a parody), `cyb3rops.bsky.social` (5 posts), and `@screaminggoat` (410 Gone).

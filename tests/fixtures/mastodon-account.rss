@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:webfeeds="http://webfeeds.org/rss/1.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Grace Analyst</title>
+    <description>Public posts from @grace@infosec.example</description>
+    <link>https://infosec.example/@grace</link>
+    <lastBuildDate>Sun, 08 Nov 2026 10:00:00 +0000</lastBuildDate>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/1001</guid>
+      <link>https://infosec.example/@grace/1001</link>
+      <pubDate>Sun, 08 Nov 2026 09:00:00 +0000</pubDate>
+      <description>&lt;p&gt;Scans for OpenSSH flaw (CVE-2026-12345) &lt;a href="https://diary.example.org/33498" target="_blank" rel="nofollow noopener" translate="no"&gt;&lt;span class="invisible"&gt;https://&lt;/span&gt;&lt;span class=""&gt;diary.example.org/33498&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;</description>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/1002</guid>
+      <link>https://infosec.example/@grace/1002</link>
+      <pubDate>Sun, 08 Nov 2026 08:00:00 +0000</pubDate>
+      <description>&lt;p&gt;Cheap chargers are a mystery to me.&lt;/p&gt;&lt;p&gt;Anyway, &lt;a href="https://shop.example.com/charger" rel="nofollow noopener"&gt;this one&lt;/a&gt;.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/1003</guid>
+      <link>https://infosec.example/@grace/1003</link>
+      <pubDate>Sun, 08 Nov 2026 07:00:00 +0000</pubDate>
+      <description>&lt;p&gt;New, from me: botnet of 1.3M TV boxes dismantled&lt;/p&gt;&lt;p&gt;Thanks &lt;span class="h-card"&gt;&lt;a href="https://infosec.example/@friend" class="u-url mention"&gt;@&lt;span&gt;friend&lt;/span&gt;&lt;/a&gt;&lt;/span&gt; &lt;a href="https://infosec.example/tags/botnet" class="mention hashtag" rel="tag"&gt;#&lt;span&gt;botnet&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="https://news.example.com/2026/11/botnet-takedown/" rel="nofollow noopener"&gt;news.example.com/2026/11/botnet-takedown/&lt;/a&gt;&lt;/p&gt;</description>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/1004</guid>
+      <link>https://infosec.example/@grace/1004</link>
+      <pubDate>Sun, 08 Nov 2026 06:00:00 +0000</pubDate>
+      <description>&lt;p&gt;Malware talk tonight, thanks &lt;a href="https://other.example/@someone" class="u-url mention"&gt;@someone&lt;/a&gt;&lt;/p&gt;</description>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/1005</guid>
+      <link>https://infosec.example/@grace/1005</link>
+      <pubDate>Sun, 08 Nov 2026 05:00:00 +0000</pubDate>
+      <description>&lt;p class="quote-inline"&gt;RE: &lt;a href="https://other.example/@bob/77" rel="nofollow noopener"&gt;other.example/@bob/77&lt;/a&gt;&lt;/p&gt;&lt;p&gt;We are buying CVE authorship now?&lt;/p&gt;</description>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/1006</guid>
+      <link>https://infosec.example/@grace/1006</link>
+      <pubDate>Sun, 08 Nov 2026 04:00:00 +0000</pubDate>
+      <description>&lt;p class="quote-inline"&gt;RE: &lt;a href="https://other.example/@bob/78"&gt;other.example/@bob/78&lt;/a&gt;&lt;/p&gt;&lt;p&gt;This one is real: CVE-2026-55555 exploited&lt;/p&gt;</description>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://infosec.example/@grace/0900</guid>
+      <link>https://infosec.example/@grace/0900</link>
+      <pubDate>Mon, 05 Oct 2026 04:00:00 +0000</pubDate>
+      <description>&lt;p&gt;Old: CVE-2026-11111 exploited&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>

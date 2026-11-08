@@ -47,6 +47,8 @@ export const sourceType = pgEnum("source_type", [
   "rss",
   "cisa_kev",
   "hackernews",
+  "bluesky",
+  "mastodon",
 ]);
 
 export const sourceCategory = pgEnum("source_category", [

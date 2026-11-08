@@ -215,6 +215,9 @@ export type StoryItem = {
   source_name: string;
   category: string;
   hn_url: string | null;
+  /** Social sources: the post's own permalink (the item URL is the linked article when there is one). */
+  post_url: string | null;
+  network: string | null;
   points: number | null;
   comments: number | null;
 };
@@ -241,7 +244,9 @@ export async function getStory(
               i.source_id, so.name AS source_name, so.category::text AS category,
               CASE WHEN so.type = 'hackernews' THEN i.raw->>'hnUrl' END AS hn_url,
               CASE WHEN so.type = 'hackernews' THEN (i.raw->>'points')::int END AS points,
-              CASE WHEN so.type = 'hackernews' THEN (i.raw->>'numComments')::int END AS comments
+              CASE WHEN so.type = 'hackernews' THEN (i.raw->>'numComments')::int END AS comments,
+              CASE WHEN so.type::text IN ('bluesky', 'mastodon', 'x') THEN i.raw->>'postUrl' END AS post_url,
+              CASE WHEN so.type::text IN ('bluesky', 'mastodon', 'x') THEN so.type::text END AS network
          FROM items i JOIN sources so ON so.id = i.source_id
         WHERE i.story_id = $1
         ORDER BY i.activity_at, i.id`,
