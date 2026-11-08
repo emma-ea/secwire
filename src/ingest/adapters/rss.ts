@@ -29,6 +29,9 @@ const parser = new Parser<Record<string, unknown>, FeedItem>({
 });
 
 export async function parseFeed(xml: string, now = new Date()): Promise<NormalizedItem[]> {
+  if (/^\s*(?:\ufeff)?\s*(?:<!doctype html|<html[\s>])/i.test(xml)) {
+    throw new SourceParseError("URL returned an HTML page, not an RSS/Atom feed (the feed may have moved)");
+  }
   let feed: Awaited<ReturnType<typeof parser.parseString>>;
   try {
     feed = await parser.parseString(xml);

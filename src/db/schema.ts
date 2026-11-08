@@ -88,7 +88,23 @@ export const runSourceStatus = pgEnum("run_source_status", [
   "not_modified",
   "skipped_locked",
   "failed",
+  // Not in the §5 enum but required by §7.3/§7.4 (see DECISIONS.md):
+  "skipped_disabled",
+  "skipped_cooldown",
+  "cancelled",
 ]);
+
+/** Statuses after which a run-source row never changes again. */
+export const TERMINAL_RUN_SOURCE_STATUSES = [
+  "coalesced",
+  "succeeded",
+  "not_modified",
+  "skipped_locked",
+  "failed",
+  "skipped_disabled",
+  "skipped_cooldown",
+  "cancelled",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Sources & items
@@ -305,9 +321,17 @@ export const ingestionRunSources = pgTable(
     itemsUpdated: integer().notNull().default(0),
     durationMs: integer(),
     error: text(),
+    /** pg-boss attempts made so far (1 = first try). */
+    attempts: integer().notNull().default(0),
+    startedAt: timestamptz(),
+    finishedAt: timestamptz(),
   },
   (t) => [
     primaryKey({ columns: [t.runId, t.sourceId] }),
+    // "Is a job for this source queued/running?" — disables Run now buttons.
+    index("ingestion_run_sources_active_idx")
+      .on(t.sourceId)
+      .where(sql`${t.status} IN ('queued', 'running')`),
     index("ingestion_run_sources_source_idx").on(t.sourceId),
     index("ingestion_run_sources_job_idx").on(t.jobId),
   ],
@@ -349,4 +373,19 @@ export const workerHeartbeats = pgTable(
     version: text().notNull(),
   },
   (t) => [index("worker_heartbeats_last_beat_idx").on(t.lastBeatAt.desc())],
+);
+
+/** Admin login attempts, for rate limiting (SPEC §10). Pruned daily. */
+export const loginAttempts = pgTable(
+  "login_attempts",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    ip: text().notNull(),
+    attemptedAt: timestamptz().notNull().defaultNow(),
+    succeeded: boolean().notNull().default(false),
+  },
+  (t) => [
+    index("login_attempts_ip_time_idx").on(t.ip, t.attemptedAt.desc()),
+    index("login_attempts_time_idx").on(t.attemptedAt.desc()),
+  ],
 );
