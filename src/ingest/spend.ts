@@ -137,20 +137,54 @@ export async function budgetBlock(provider: Provider, projectedUsd: number, q: Q
  * `track` as it goes (per HTTP request), so a failure after some requests
  * still records what was spent.
  */
+/** Waiting for another paid call of the same provider timed out (or was aborted). */
+export class SpendLockTimeoutError extends Error {
+  constructor(provider: Provider, waitedMs: number) {
+    super(`another ${PROVIDER_LABELS[provider]} call is in progress (waited ${Math.round(waitedMs / 1000)}s)`);
+    this.name = "SpendLockTimeoutError";
+  }
+}
+
+export const SPEND_LOCK_WAIT_MS = 120_000;
+const LOCK_POLL_MS = 250;
+
+/** pg_try_advisory_lock in a loop, so the wait honors a deadline and the caller's abort signal. */
+async function acquireSpendLock(client: Queryable, provider: Provider, opts: { signal?: AbortSignal; waitMs: number }) {
+  const started = Date.now();
+  for (;;) {
+    const r = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS locked", [`spend:${provider}`]);
+    if (r.rows[0]?.locked) return;
+    const waited = Date.now() - started;
+    if (opts.signal?.aborted || waited >= opts.waitMs) throw new SpendLockTimeoutError(provider, waited);
+    await new Promise((res) => setTimeout(res, LOCK_POLL_MS));
+  }
+}
+
+/**
+ * Runs one paid call under the provider's budget. `fn` reports usage through
+ * `track` as it goes (per HTTP request), so a failure after some requests
+ * still records what was spent.
+ *
+ * Pass `client` to reuse a connection the caller already holds (runSource), so
+ * a paid fetch doesn't take a second pooled connection. The session lock is
+ * always released on that same connection.
+ */
 export async function withBudget<T>(
   provider: Provider,
   projectedUsd: number,
   fn: (track: (u: Partial<Usage>) => void) => Promise<T>,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; client?: PoolClient; signal?: AbortSignal; lockWaitMs?: number } = {},
 ): Promise<{ result: T; usage: Usage }> {
   const st = providerStatus(provider);
   if (!st.enabled) throw new BudgetError("disabled", st.disabledReason!);
 
-  const client: PoolClient = await getPool().connect();
+  const client: PoolClient = opts.client ?? (await getPool().connect());
   const lockKey = `spend:${provider}`;
-  await client.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
+  let locked = false;
   const usage: Usage = { ...NO_USAGE };
   try {
+    await acquireSpendLock(client, provider, { signal: opts.signal, waitMs: opts.lockWaitMs ?? SPEND_LOCK_WAIT_MS });
+    locked = true;
     const now = opts.now ?? new Date();
     const spent = await monthSpend(client, provider, now);
     const cap = capBlockReason(st.label, spent.usd, projectedUsd, st.capUsd);
@@ -166,8 +200,8 @@ export async function withBudget<T>(
       await recordSpend(client, provider, usage, now);
     }
   } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]).catch(() => {});
-    client.release();
+    if (locked) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]).catch(() => {});
+    if (!opts.client) client.release();
   }
 }
 
@@ -188,6 +222,7 @@ export async function fetchWithBudget(
   adapter: SourceAdapter,
   source: Source,
   ctx: AdapterContext,
+  opts: { client?: PoolClient } = {},
 ): Promise<FetchResult> {
   if (!adapter.paid) return adapter.fetch(source, ctx);
   const withCreds: AdapterContext = { ...ctx, ...(adapter.type === "x" ? { x: xContext() } : {}) };
@@ -195,7 +230,7 @@ export async function fetchWithBudget(
     adapter.paid.provider,
     adapter.paid.maxCostPerFetchUsd(source),
     (track) => adapter.fetch(source, { ...withCreds, trackUsage: track }),
-    { now: ctx.now },
+    { now: ctx.now, client: opts.client, signal: ctx.signal },
   );
   return result;
 }

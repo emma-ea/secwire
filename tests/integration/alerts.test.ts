@@ -13,6 +13,9 @@ import {
   sendTestAlert,
   slackMessage,
   updateWatchlist,
+  MAX_ATTEMPTS,
+  RETRY_DELAYS_MINUTES,
+  wordRegex,
   type AlertMessage,
   type Senders,
 } from "@/ingest/alerts";
@@ -23,6 +26,9 @@ import { addSource, fakeFetcher, resetDb } from "./helpers";
 
 const now = Date.now();
 let n = 0;
+
+/** Make failed deliveries due for retry now (skips the backoff wait). */
+const dueNow = () => getDb().execute(sql`UPDATE alert_deliveries SET next_attempt_at = now() - interval '1 second' WHERE status = 'failed'`);
 
 async function item(hoursAgo: number, title: string, cve?: string) {
   n++;
@@ -136,6 +142,8 @@ describe("watchlist alerts (Phase 3)", () => {
     await item(3, "Exchange zero-day", "CVE-2026-1003"); // CVSS 9.8, KEV
     await item(3, "Stock exchanges hit by outage"); // no CVE; "exchanges" isn't the word "exchange"
     await item(3, "Exchange Online phishing wave"); // no CVE; title word match
+    await item(3, "Critical .NET RCE patched"); // term starts with punctuation
+    await item(3, "C++ library flaw"); // term ends with punctuation
     await clusterItems({ windowDays: 14 });
     const titles = async (w: Parameters<typeof matchingStories>[0]) => (await matchingStories(w)).map((s) => s.title).sort();
     const base = { minCvss: null, kevOnly: false, ransomwareOnly: false };
@@ -145,40 +153,136 @@ describe("watchlist alerts (Phase 3)", () => {
     expect(await titles({ ...base, terms: ["exchange"], kevOnly: true })).toEqual(["Exchange zero-day"]);
     expect(await titles({ ...base, terms: ["micro"] })).toEqual(["Exchange zero-day"]); // vendor substring
     expect(await titles({ ...base, terms: ["100%_"] })).toEqual([]);
+    expect(await titles({ ...base, terms: [".NET"] })).toEqual(["Critical .NET RCE patched"]);
+    expect(await titles({ ...base, terms: ["c++"] })).toEqual(["C++ library flaw"]);
+    expect([wordRegex("ivanti"), wordRegex(".NET"), wordRegex("C++")]).toEqual(["\\mivanti\\M", "\\.NET\\M", "\\mC\\+\\+"]);
   });
 
-  it("retries only the failed channel, up to 3 attempts", async () => {
+  it("retries only the failed channel, with backoff, up to MAX_ATTEMPTS", async () => {
     await createWatchlist({ name: "Ivanti", terms: ["ivanti"], channels: ["slack", "email"] });
     await item(3, "Ivanti EPMM bug", "CVE-2026-1002");
     await clusterItems({ windowDays: 14 });
     const { senders, sent } = fakeSenders({ email: 1 });
     expect(await scanAlerts({ senders })).toMatchObject({ created: 1, sent: 0, failed: 1 });
     expect((await recentDeliveries())[0]).toMatchObject({ status: "failed", sent_channels: ["slack"], attempts: 1, error: "email: smtp down" });
+    // Backoff: an immediate re-scan (e.g. right after the next cluster job) doesn't burn an attempt.
+    expect(await scanAlerts({ senders })).toMatchObject({ sent: 0, failed: 0 });
+    await dueNow();
     expect(await scanAlerts({ senders })).toMatchObject({ sent: 1, failed: 0 });
     expect([sent.slack.length, sent.email.length]).toEqual([1, 1]);
 
     const stuck = fakeSenders({ slack: 99 });
     await item(2, "Ivanti Connect Secure flaw", "CVE-2026-1001");
     await clusterItems({ windowDays: 14 });
-    for (let i = 0; i < 5; i++) await scanAlerts({ senders: stuck.senders });
+    for (let i = 0; i < MAX_ATTEMPTS + 3; i++) {
+      await scanAlerts({ senders: stuck.senders });
+      await dueNow();
+    }
     const failed = (await recentDeliveries()).find((d) => d.title === "Ivanti Connect Secure flaw")!;
-    expect(failed).toMatchObject({ status: "failed", attempts: 3 });
+    expect(failed).toMatchObject({ status: "failed", attempts: MAX_ATTEMPTS });
+    expect(MAX_ATTEMPTS).toBe(8);
+    expect(RETRY_DELAYS_MINUTES.reduce((a, b) => a + b, 0)).toBeGreaterThan(12 * 60); // hours of outage, not minutes
   });
 
-  it("no configured channel → skipped (nothing sent); a disabled watchlist is ignored", async () => {
+  it("channels missing from this process's env: alerts wait (not dropped), deliver once configured, give up after a day", async () => {
     setEnv({});
     const { watchlist } = await createWatchlist({ name: "Ivanti", terms: ["ivanti"], channels: ["slack"] });
     await item(3, "Ivanti EPMM bug", "CVE-2026-1002");
     await clusterItems({ windowDays: 14 });
     const { senders, sent } = fakeSenders();
-    expect(await scanAlerts({ senders })).toMatchObject({ created: 1, skipped: 1 });
-    expect(sent.slack).toHaveLength(0);
+    expect(await scanAlerts({ senders })).toMatchObject({ created: 1, waiting: 1, skipped: 0 });
+    expect((await recentDeliveries())[0]).toMatchObject({ status: "pending", attempts: 0 });
+    expect((await recentDeliveries())[0]!.error).toMatch(/^waiting for channel settings: SLACK_WEBHOOK_URL is not set/);
     expect(await sendTestAlert(watchlist.id, { senders })).toEqual({ sent: [], errors: ["no configured channel is selected for this watchlist"] });
 
-    await updateWatchlist(watchlist.id, { name: "Ivanti", terms: ["ivanti", "epmm"], channels: ["slack"], enabled: false });
-    await item(1, "Ivanti Connect Secure flaw", "CVE-2026-1001");
+    setEnv(CHANNEL_ENV);
+    expect(await scanAlerts({ senders })).toMatchObject({ sent: 1, waiting: 0 });
+    expect(sent.slack).toHaveLength(1);
+
+    setEnv({});
+    await item(2, "Ivanti Connect Secure flaw", "CVE-2026-1001");
     await clusterItems({ windowDays: 14 });
-    expect(await scanAlerts({ senders })).toMatchObject({ watchlists: 0, created: 0 });
+    await scanAlerts({ senders });
+    await getDb().execute(sql`UPDATE alert_deliveries SET created_at = now() - interval '25 hours' WHERE status = 'pending'`);
+    expect(await scanAlerts({ senders })).toMatchObject({ skipped: 1, waiting: 0 });
+  });
+
+  it("a watchlist with no channel selected skips its alerts", async () => {
+    await createWatchlist({ name: "Ivanti", terms: ["ivanti"], channels: [] });
+    await item(3, "Ivanti EPMM bug", "CVE-2026-1002");
+    await clusterItems({ windowDays: 14 });
+    expect(await scanAlerts({ senders: fakeSenders().senders })).toMatchObject({ created: 1, skipped: 1 });
+  });
+
+  it("pausing a watchlist stops its queued and failed alerts; re-enabling doesn't fire them", async () => {
+    const { watchlist } = await createWatchlist({ name: "Ivanti", terms: ["ivanti"], channels: ["slack"] });
+    const other = await createWatchlist({ name: "Exchange", terms: ["exchange"], channels: ["slack"] });
+    await item(3, "Ivanti EPMM bug", "CVE-2026-1002");
+    await clusterItems({ windowDays: 14 });
+    // Fail delivery once so the row is queued for retry, then pause.
+    expect(await scanAlerts({ senders: fakeSenders({ slack: 1 }).senders })).toMatchObject({ failed: 1 });
+    await item(2, "Ivanti Connect Secure flaw", "CVE-2026-1001");
+    await clusterItems({ windowDays: 14 });
+    await updateWatchlist(watchlist.id, { name: "Ivanti", terms: ["ivanti"], channels: ["slack"], enabled: false });
+    expect((await recentDeliveries()).map((d) => [d.title, d.status, d.error])).toEqual([["Ivanti EPMM bug", "skipped", "watchlist paused"]]);
+
+    const { senders, sent } = fakeSenders();
+    await dueNow();
+    expect(await scanAlerts({ senders })).toMatchObject({ watchlists: 1, created: 0, sent: 0 }); // only "Exchange" runs
+    await updateWatchlist(watchlist.id, { name: "Ivanti", terms: ["ivanti"], channels: ["slack"], enabled: true });
+    expect(await scanAlerts({ senders })).toMatchObject({ created: 0, sent: 0 });
+    expect(sent.slack).toHaveLength(0);
+    expect(other.watchlist.enabled).toBe(true);
+  });
+
+  it("an older item joining an alerted story (new earliest item) doesn't re-alert it", async () => {
+    await createWatchlist({ name: "Ivanti", terms: ["ivanti"], channels: ["slack"] });
+    await addSource({ id: "bsky", type: "bluesky", category: "social", url: "https://bsky.app/profile/a.example.com" });
+    // The post arrives first and starts the story...
+    const at = new Date(now - 2 * 3_600_000);
+    await getDb().insert(items).values({
+      sourceId: "bsky",
+      externalId: "post1",
+      url: "https://news.example.com/ivanti-article",
+      canonicalUrlHash: hashCanonicalUrl("https://news.example.com/ivanti-article"),
+      title: "Ivanti EPMM exploited, patch now",
+      publishedAt: at,
+      fetchedAt: at,
+    });
+    await clusterItems({ windowDays: 14 });
+    const { senders, sent } = fakeSenders();
+    expect(await scanAlerts({ senders })).toMatchObject({ created: 1, sent: 1 });
+    // ...then the article it links to, published earlier, joins by URL and becomes the earliest item.
+    const earlier = new Date(now - 5 * 3_600_000);
+    await getDb().insert(items).values({
+      sourceId: "bc",
+      externalId: "article1",
+      url: "https://news.example.com/ivanti-article",
+      canonicalUrlHash: hashCanonicalUrl("https://news.example.com/ivanti-article"),
+      title: "Ivanti warns of exploited EPMM flaw",
+      publishedAt: earlier,
+      fetchedAt: new Date(now),
+    });
+    await clusterItems({ windowDays: 14 });
+    expect((await getPool().query("SELECT count(*)::int AS n FROM stories")).rows[0].n).toBe(1);
+    expect(await scanAlerts({ senders })).toMatchObject({ created: 0, sent: 0 });
+    expect(sent.slack).toHaveLength(1);
+  });
+
+  it("no row limit: a broad watchlist baselines every match", async () => {
+    // 520 matching stories, inserted directly (clustering isn't under test here).
+    await getPool().query(
+      `WITH s AS (
+         INSERT INTO stories (title, first_seen_at, last_activity_at, item_count)
+         SELECT 'Ivanti story ' || g, now() - interval '1 hour', now() - interval '1 hour', 1 FROM generate_series(1, 520) g
+         RETURNING id, title)
+       INSERT INTO items (source_id, external_id, url, canonical_url_hash, title, published_at, fetched_at, story_id)
+       SELECT 'bc', s.id::text, 'https://news.example.com/' || s.id, md5(s.id::text), s.title, now() - interval '1 hour', now() - interval '1 hour', s.id
+         FROM s`,
+    );
+    const { baselined } = await createWatchlist({ name: "Ivanti", terms: ["ivanti"], channels: ["slack"] });
+    expect(baselined).toBe(520);
+    expect(await scanAlerts({ senders: fakeSenders().senders })).toMatchObject({ created: 0, sent: 0 });
   });
 
   it("a concurrent scan skips instead of double-sending", async () => {

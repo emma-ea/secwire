@@ -12,7 +12,7 @@ import type { PgBoss } from "pg-boss";
 import { getPool, type Queryable } from "../db/client";
 import { getEnv } from "../env";
 import { getSenderBoss, QUEUES, type SummarizeStoryJob } from "./boss";
-import { modelPrice, providerStatus, withBudget } from "./spend";
+import { budgetBlock, modelPrice, withBudget } from "./spend";
 
 export const SUMMARY_MAX_TOKENS = 1024;
 export const SUMMARY_MAX_CHARS = 700;
@@ -103,6 +103,25 @@ export function cleanSummary(text: string): string | null {
 /** ~3.5 characters per token for English; overestimates slightly, which is the safe side for the cap. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5) + 50;
+}
+
+/** Worst-case cost of a typical summary (≈8K characters of coverage); 0 when the price is unknown. */
+export function typicalSummaryCostUsd(): number {
+  const price = modelPrice(getEnv().SUMMARY_MODEL);
+  if (!price) return 0;
+  return (estimateTokens(SUMMARY_SYSTEM_PROMPT) + estimateTokens("x".repeat(8000))) * (price.input / 1e6) + SUMMARY_MAX_TOKENS * (price.output / 1e6);
+}
+
+/**
+ * The API rejected this story's request (non-retryable 4xx): record it like a
+ * refusal, so the story isn't re-queued on every tick until new items join.
+ */
+export async function recordSummaryRejected(storyId: string, db: Queryable = getPool()): Promise<void> {
+  await db.query(
+    `UPDATE stories SET summary = NULL, summary_item_count = item_count, summary_model = $2, summary_generated_at = now()
+      WHERE id = $1`,
+    [storyId, getEnv().SUMMARY_MODEL],
+  );
 }
 
 export type SummarizeResult =
@@ -198,7 +217,8 @@ export async function storiesNeedingSummary(db: Queryable = getPool(), limit = E
  * story at most (stately, singletonKey = story id).
  */
 export async function enqueueSummaries(deps: { boss?: PgBoss; db?: Queryable } = {}): Promise<number> {
-  if (!providerStatus("anthropic").enabled) return 0;
+  // Off, or this month's cap can't fit a typical summary: don't queue jobs that would only be refused.
+  if (await budgetBlock("anthropic", typicalSummaryCostUsd(), deps.db)) return 0;
   const ids = await storiesNeedingSummary(deps.db);
   if (!ids.length) return 0;
   const boss = deps.boss ?? (await getSenderBoss());

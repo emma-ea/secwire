@@ -72,11 +72,66 @@ export function xStartTime(lastSuccessAt: Date | null, now: Date): string {
   return new Date(Math.max(from, now.getTime() - MAX_LOOKBACK_MS)).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-export function xSearchUrl(account: string, cfg: XConfig, startTime: string): string {
+/**
+ * Per-account cursors (newest post id fetched + when), kept in sources.etag:
+ * the adapter contract's opaque per-source validator, persisted by runSource
+ * only after a successful fetch. With since_id, a run never re-reads (and
+ * re-pays for) posts an earlier run already fetched.
+ */
+export type XCursors = Record<string, { sinceId: string; at: string }>;
+const CURSOR_PREFIX = "x1:";
+/** since_id must be inside the 7-day recent-search window; older cursors fall back to start_time. */
+const CURSOR_MAX_AGE_MS = 6.5 * 24 * 3_600_000;
+
+export function parseXCursors(etag: string | null): XCursors {
+  if (!etag?.startsWith(CURSOR_PREFIX)) return {};
+  try {
+    const raw = JSON.parse(etag.slice(CURSOR_PREFIX.length)) as unknown;
+    const out: XCursors = {};
+    if (raw && typeof raw === "object") {
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        const c = v as { sinceId?: unknown; at?: unknown };
+        if (ACCOUNT_RE.test(k) && typeof c?.sinceId === "string" && /^\d{0,19}$/.test(c.sinceId) && typeof c.at === "string") {
+          out[k] = { sinceId: c.sinceId, at: c.at };
+        }
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export const serializeXCursors = (c: XCursors) => `${CURSOR_PREFIX}${JSON.stringify(c)}`;
+
+export type XWindow = { sinceId: string } | { startTime: string };
+
+/** since_id when the account has a fresh cursor; otherwise a 24h start_time (new account, or idle > 6.5 days). */
+export function xWindow(cursor: XCursors[string] | undefined, now: Date): XWindow {
+  if (cursor?.sinceId && now.getTime() - new Date(cursor.at).getTime() < CURSOR_MAX_AGE_MS) return { sinceId: cursor.sinceId };
+  return { startTime: xStartTime(null, now) };
+}
+
+/** Posts X returned (and billed), whether or not they pass our schema. */
+export function billableCount(json: unknown): number {
+  const data = (json as { data?: unknown } | null)?.data;
+  return Array.isArray(data) ? data.length : 0;
+}
+
+/** meta.newest_id, else the largest post id in data. */
+export function newestId(json: unknown): string | null {
+  const j = json as { meta?: { newest_id?: unknown }; data?: Array<{ id?: unknown }> } | null;
+  if (typeof j?.meta?.newest_id === "string" && /^\d{1,19}$/.test(j.meta.newest_id)) return j.meta.newest_id;
+  const ids = (Array.isArray(j?.data) ? j.data : []).map((p) => p?.id).filter((id): id is string => typeof id === "string" && /^\d{1,19}$/.test(id));
+  return ids.length ? ids.reduce((a, b) => (BigInt(a) > BigInt(b) ? a : b)) : null;
+}
+
+export function xSearchUrl(account: string, cfg: XConfig, window: XWindow): string {
   const u = new URL(X_SEARCH_URL);
   u.searchParams.set("query", xQuery(account, cfg.filter));
   u.searchParams.set("max_results", String(cfg.maxResults));
-  u.searchParams.set("start_time", startTime);
+  if ("sinceId" in window) u.searchParams.set("since_id", window.sinceId);
+  else u.searchParams.set("start_time", window.startTime);
   u.searchParams.set("sort_order", "recency");
   // `tweet.fields`: the 2026 docs page lists `post.fields`, but every working
   // example still uses tweet.fields. See DECISIONS.md.
@@ -161,27 +216,54 @@ export const xAdapter: SourceAdapter = {
     if (!ctx.x) throw new SourceParseError("X credentials are not configured");
     const cfg = xConfig(source);
     const now = ctx.now ?? new Date();
-    const startTime = xStartTime(source.lastSuccessAt, now);
+    const cursors = parseXCursors(source.etag);
+    const next: XCursors = {};
     const byId = new Map<string, NormalizedItem>();
     let lastStatus = 200;
+    let succeeded = 0;
+    let failure: { account: string; err: unknown } | null = null;
     for (const account of cfg.accounts) {
-      const res = await getFrom(xSearchUrl(account, cfg, startTime), ctx, {
-        authorization: `Bearer ${ctx.x.bearerToken}`,
-        accept: "application/json",
-      });
-      ctx.trackUsage?.({ requests: 1 });
-      assertOk(res);
-      lastStatus = res.status;
-      let json: unknown;
       try {
-        json = JSON.parse(res.text());
-      } catch {
-        throw new SourceParseError("X: response is not JSON");
+        const res = await getFrom(xSearchUrl(account, cfg, xWindow(cursors[account], now)), ctx, {
+          authorization: `Bearer ${ctx.x.bearerToken}`,
+          accept: "application/json",
+        });
+        ctx.trackUsage?.({ requests: 1 });
+        assertOk(res);
+        lastStatus = res.status;
+        let json: unknown;
+        try {
+          json = JSON.parse(res.text());
+        } catch {
+          throw new SourceParseError("X: response is not JSON");
+        }
+        // Count what X bills before strict parsing, so a schema surprise still counts toward the cap.
+        const billable = billableCount(json);
+        ctx.trackUsage?.({ units: billable, usd: billable * ctx.x.postReadUsd });
+        const { items } = parseXSearch(json, account, cfg, now);
+        for (const i of items) byId.set(i.externalId, i);
+        const newest = newestId(json);
+        // No new posts: keep the old cursor (it ages out after 6.5 days and falls back to start_time).
+        const cursor = newest ? { sinceId: newest, at: now.toISOString() } : cursors[account];
+        if (cursor) next[account] = cursor;
+        succeeded++;
+      } catch (err) {
+        // Stop at the first failure (a 429 would repeat for the rest). Accounts not reached keep their cursor.
+        failure = { account, err };
+        break;
       }
-      const { items, billable } = parseXSearch(json, account, cfg, now);
-      ctx.trackUsage?.({ units: billable, usd: billable * ctx.x.postReadUsd });
-      for (const i of items) byId.set(i.externalId, i);
     }
-    return { status: "ok", httpStatus: lastStatus, items: [...byId.values()] };
+    if (failure && succeeded === 0) throw failure.err;
+    // Accounts that weren't fetched keep their old cursor, so the next run picks up exactly where they left off.
+    for (const a of cfg.accounts) if (!next[a] && cursors[a]) next[a] = cursors[a]!;
+    return {
+      status: "ok",
+      httpStatus: lastStatus,
+      items: [...byId.values()],
+      etag: serializeXCursors(next),
+      ...(failure
+        ? { partialError: `@${failure.account}: ${failure.err instanceof Error ? failure.err.message : String(failure.err)}`.slice(0, 500) }
+        : {}),
+    };
   },
 };

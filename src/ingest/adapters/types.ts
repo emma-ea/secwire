@@ -47,6 +47,11 @@ export type FetchResult =
       etag?: string;
       lastModified?: string;
       cves?: CveRecord[];
+      /**
+       * Some requests of a multi-request fetch failed after others succeeded (X):
+       * the items and validators are still saved, and the run row shows this.
+       */
+      partialError?: string;
     };
 
 export type Fetcher = (url: string, opts: SafeFetchOptions) => Promise<SafeResponse>;

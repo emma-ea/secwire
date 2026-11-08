@@ -511,6 +511,8 @@ export const alertDeliveries = pgTable(
     /** Channels that already accepted this alert; a retry only resends to the others. */
     sentChannels: alertChannel().array().notNull().default(sql`'{}'::alert_channel[]`),
     attempts: integer().notNull().default(0),
+    /** Failed deliveries are retried with backoff from this time on. */
+    nextAttemptAt: timestamptz(),
     error: text(),
     createdAt: createdAt(),
     sentAt: timestamptz(),

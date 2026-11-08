@@ -21,7 +21,7 @@ import { enqueueClusterIfPending } from "./hooks";
 import { runSource, type RunSourceOptions } from "./run-source";
 import { enqueueAlertScan, scanAlerts, type Senders } from "./alerts";
 import { BudgetError } from "./spend";
-import { enqueueSummaries, summarizeStory, type SummaryClient } from "./summarize";
+import { enqueueSummaries, recordSummaryRejected, summarizeStory, type SummaryClient } from "./summarize";
 import {
   completeJobRun,
   createJobRun,
@@ -207,6 +207,7 @@ export async function handleSummarizeJob(job: Pick<Job<SummarizeStoryJob>, "data
     if (err instanceof BudgetError) return { status: "skipped" as const, reason: err.message };
     if (err instanceof Anthropic.APIError && err.status !== undefined && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 409 && err.status !== 429) {
       console.error(`[summarize] ${job.data.storyId}: request rejected (${err.status}): ${err.message}`);
+      await recordSummaryRejected(job.data.storyId);
       return { status: "skipped" as const, reason: `API error ${err.status}` };
     }
     throw err;

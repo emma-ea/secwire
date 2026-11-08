@@ -32,7 +32,12 @@ export const ALERT_CHANNELS = ["slack", "email"] as const;
 export type AlertChannel = (typeof ALERT_CHANNELS)[number];
 /** Stories active this recently are matched (and baselined). */
 export const ALERT_WINDOW_DAYS = 7;
-export const MAX_ATTEMPTS = 3;
+/** Failed deliveries retry with backoff (minutes after attempt n): together about 15 hours before giving up. */
+export const RETRY_DELAYS_MINUTES = [2, 10, 30, 60, 120, 240, 480];
+export const MAX_ATTEMPTS = RETRY_DELAYS_MINUTES.length + 1;
+export const retryDelayMinutes = (attempts: number) => RETRY_DELAYS_MINUTES[Math.min(attempts, RETRY_DELAYS_MINUTES.length) - 1] ?? 2;
+/** Alerts whose selected channels aren't configured wait this long for settings, then are skipped. */
+export const UNCONFIGURED_GIVE_UP_HOURS = 24;
 const ALERT_LOCK_SQL = "SELECT pg_try_advisory_lock(hashtext('secwire:alerts')) AS locked";
 const ALERT_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('secwire:alerts'))";
 
@@ -138,6 +143,14 @@ export async function updateWatchlist(id: string, input: WatchlistInput): Promis
     );
     if (!r.rows[0]) return null;
     const watchlist = toWatchlist(r.rows[0]);
+    if (!watchlist.enabled) {
+      // Pausing drops the queue: nothing already waiting fires later on re-enable.
+      await c.query(
+        `UPDATE alert_deliveries SET status = 'skipped', error = 'watchlist paused'
+          WHERE watchlist_id = $1 AND status IN ('pending', 'failed')`,
+        [id],
+      );
+    }
     return { watchlist, baselined: await baseline(c, watchlist) };
   });
 }
@@ -170,8 +183,16 @@ export type MatchedStory = {
 };
 
 const likePattern = (t: string) => `%${t.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-/** Postgres ARE whole-word match: \m … \M around the escaped term. */
-const wordRegex = (t: string) => `\\m${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\M`;
+
+/**
+ * Postgres ARE whole-word match. \m / \M need a word character on their inner
+ * side, so they're only added where the term starts/ends with one: ".NET" and
+ * "C++" are delimited by their own punctuation.
+ */
+export function wordRegex(t: string): string {
+  const body = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `${/^\w/.test(t) ? "\\m" : ""}${body}${/\w$/.test(t) ? "\\M" : ""}`;
+}
 
 const STORY_FIELDS = `
   s.id, s.title, s.item_count, s.has_kev, s.has_ransomware, s.max_cvss::float8 AS max_cvss,
@@ -182,54 +203,83 @@ const STORY_FIELDS = `
               FROM story_cves sc JOIN cves c ON c.id = sc.cve_id
              WHERE sc.story_id = s.id AND coalesce(c.kev_vendor, c.nvd_vendor) IS NOT NULL), '{}') AS vendor_products`;
 
-/** Stories active in the last `days` days that match the watchlist, most recent first. */
+/** WHERE clause for "story s matches the watchlist" over params $1..$6 (see matchParams). */
+const MATCH_WHERE = `
+      s.last_activity_at > now() - make_interval(days => $1)
+  AND ($2::numeric IS NULL OR s.max_cvss >= $2::numeric)
+  AND (NOT $3::boolean OR s.has_kev)
+  AND (NOT $4::boolean OR s.has_ransomware)
+  AND (
+    EXISTS (
+      SELECT 1 FROM story_cves sc JOIN cves c ON c.id = sc.cve_id, unnest($5::text[]) p(pat)
+       WHERE sc.story_id = s.id
+         AND lower(concat_ws(' ', c.kev_vendor, c.kev_product, c.nvd_vendor, c.nvd_product)) LIKE p.pat
+    )
+    OR EXISTS (SELECT 1 FROM unnest($6::text[]) w(re) WHERE s.title ~* w.re)
+  )`;
+
+type MatchCriteria = Pick<Watchlist, "terms" | "minCvss" | "kevOnly" | "ransomwareOnly">;
+const matchParams = (w: MatchCriteria, days = ALERT_WINDOW_DAYS) => [
+  days,
+  w.minCvss,
+  w.kevOnly,
+  w.ransomwareOnly,
+  w.terms.map(likePattern),
+  w.terms.map(wordRegex),
+];
+
+/** Stories active in the last `days` days that match the watchlist, most recent first (preview, test alert). */
 export async function matchingStories(
-  w: Pick<Watchlist, "terms" | "minCvss" | "kevOnly" | "ransomwareOnly">,
+  w: MatchCriteria,
   opts: { days?: number; limit?: number; q?: Queryable } = {},
 ): Promise<MatchedStory[]> {
   const q = opts.q ?? getPool();
   const r = await q.query<MatchedStory>(
-    `SELECT ${STORY_FIELDS}
-       FROM stories s
-      WHERE s.last_activity_at > now() - make_interval(days => $1)
-        AND ($2::numeric IS NULL OR s.max_cvss >= $2::numeric)
-        AND (NOT $3::boolean OR s.has_kev)
-        AND (NOT $4::boolean OR s.has_ransomware)
-        AND (
-          EXISTS (
-            SELECT 1 FROM story_cves sc JOIN cves c ON c.id = sc.cve_id, unnest($5::text[]) p(pat)
-             WHERE sc.story_id = s.id
-               AND lower(concat_ws(' ', c.kev_vendor, c.kev_product, c.nvd_vendor, c.nvd_product)) LIKE p.pat
-          )
-          OR EXISTS (SELECT 1 FROM unnest($6::text[]) w(re) WHERE s.title ~* w.re)
-        )
-      ORDER BY s.last_activity_at DESC, s.id
-      LIMIT $7`,
-    [
-      opts.days ?? ALERT_WINDOW_DAYS,
-      w.minCvss,
-      w.kevOnly,
-      w.ransomwareOnly,
-      w.terms.map(likePattern),
-      w.terms.map(wordRegex),
-      opts.limit ?? 500,
-    ],
+    `SELECT ${STORY_FIELDS} FROM stories s WHERE ${MATCH_WHERE} ORDER BY s.last_activity_at DESC, s.id LIMIT $7`,
+    [...matchParams(w, opts.days), opts.limit ?? 50],
   );
   return r.rows.filter((s) => s.anchor_item_id);
 }
 
+/**
+ * One statement per watchlist (no row limit): a "new" row for every matching
+ * story that has no "new" row yet for ANY of its current items. Checking every
+ * item, not just the anchor, keeps the guarantee when an older item joins and
+ * becomes the earliest (e.g. an article arriving after the post that linked it).
+ */
+const INSERT_NEW = `
+  INSERT INTO alert_deliveries (watchlist_id, anchor_item_id, kind, story_id, title, had_kev, status, error)
+  SELECT $7, m.anchor_item_id, 'new', m.id, m.title, m.has_kev, $8::alert_status, $9
+    FROM (SELECT s.id, s.title, s.has_kev,
+                 (SELECT i.id FROM items i WHERE i.story_id = s.id ORDER BY i.activity_at, i.id LIMIT 1) AS anchor_item_id
+            FROM stories s WHERE ${MATCH_WHERE}) m
+   WHERE m.anchor_item_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM alert_deliveries d JOIN items i ON i.id = d.anchor_item_id
+        WHERE d.watchlist_id = $7 AND d.kind = 'new' AND i.story_id = m.id)
+  ON CONFLICT DO NOTHING`;
+
+/** KEV escalation: the story is in KEV now, was alerted while it wasn't, and hasn't been escalated (any of its items). */
+const INSERT_KEV = `
+  INSERT INTO alert_deliveries (watchlist_id, anchor_item_id, kind, story_id, title, had_kev)
+  SELECT $7, m.anchor_item_id, 'kev', m.id, m.title, true
+    FROM (SELECT s.id, s.title,
+                 (SELECT i.id FROM items i WHERE i.story_id = s.id ORDER BY i.activity_at, i.id LIMIT 1) AS anchor_item_id
+            FROM stories s WHERE ${MATCH_WHERE} AND s.has_kev) m
+   WHERE m.anchor_item_id IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM alert_deliveries d JOIN items i ON i.id = d.anchor_item_id
+        WHERE d.watchlist_id = $7 AND d.kind = 'new' AND NOT d.had_kev AND i.story_id = m.id)
+     AND NOT EXISTS (
+       SELECT 1 FROM alert_deliveries d JOIN items i ON i.id = d.anchor_item_id
+        WHERE d.watchlist_id = $7 AND d.kind = 'kev' AND i.story_id = m.id)
+  ON CONFLICT DO NOTHING`;
+
+const BASELINE_ERROR = "already matched when the watchlist was saved";
+
 async function baseline(q: Queryable, w: Watchlist): Promise<number> {
-  let n = 0;
-  for (const s of await matchingStories(w, { q })) {
-    const r = await q.query(
-      `INSERT INTO alert_deliveries (watchlist_id, anchor_item_id, kind, story_id, title, had_kev, status, error)
-       VALUES ($1, $2, 'new', $3, $4, $5, 'skipped', 'already matched when the watchlist was saved')
-       ON CONFLICT DO NOTHING`,
-      [w.id, s.anchor_item_id, s.id, s.title, s.has_kev],
-    );
-    n += r.rowCount ?? 0;
-  }
-  return n;
+  const r = await q.query(INSERT_NEW, [...matchParams(w), w.id, "skipped", BASELINE_ERROR]);
+  return r.rowCount ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +451,16 @@ export async function sendTestAlert(id: string, deps: { senders?: Senders } = {}
 // Scan
 // ---------------------------------------------------------------------------
 
-export type ScanResult = { locked: boolean; watchlists: number; created: number; sent: number; failed: number; skipped: number };
+export type ScanResult = {
+  locked: boolean;
+  watchlists: number;
+  created: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  /** Pending alerts whose channels aren't configured in this process yet. */
+  waiting: number;
+};
 
 type PendingRow = {
   id: string;
@@ -412,11 +471,12 @@ type PendingRow = {
   channels: AlertChannel[] | string;
   anchor_item_id: string;
   title: string;
+  created_at: Date;
 };
 
 /** alerts.scan: match every enabled watchlist, record new alerts, deliver pending ones. */
 export async function scanAlerts(deps: { senders?: Senders; q?: Queryable } = {}): Promise<ScanResult> {
-  const out: ScanResult = { locked: false, watchlists: 0, created: 0, sent: 0, failed: 0, skipped: 0 };
+  const out: ScanResult = { locked: false, watchlists: 0, created: 0, sent: 0, failed: 0, skipped: 0, waiting: 0 };
   const client = await getPool().connect();
   try {
     // One scanner at a time (any number of workers); a concurrent scan just skips.
@@ -426,26 +486,9 @@ export async function scanAlerts(deps: { senders?: Senders; q?: Queryable } = {}
       const lists = (await listWatchlists(client)).filter((w) => w.enabled);
       out.watchlists = lists.length;
       for (const w of lists) {
-        for (const s of await matchingStories(w, { q: client })) {
-          const n = await client.query(
-            `INSERT INTO alert_deliveries (watchlist_id, anchor_item_id, kind, story_id, title, had_kev)
-             VALUES ($1, $2, 'new', $3, $4, $5) ON CONFLICT DO NOTHING`,
-            [w.id, s.anchor_item_id, s.id, s.title, s.has_kev],
-          );
-          out.created += n.rowCount ?? 0;
-          if (s.has_kev) {
-            // Escalation: only after a "new" row written while the story wasn't in KEV.
-            const k = await client.query(
-              `INSERT INTO alert_deliveries (watchlist_id, anchor_item_id, kind, story_id, title, had_kev)
-               SELECT $1, $2, 'kev', $3, $4, true
-                WHERE EXISTS (SELECT 1 FROM alert_deliveries
-                               WHERE watchlist_id = $1 AND anchor_item_id = $2 AND kind = 'new' AND NOT had_kev)
-               ON CONFLICT DO NOTHING`,
-              [w.id, s.anchor_item_id, s.id, s.title],
-            );
-            out.created += k.rowCount ?? 0;
-          }
-        }
+        const params = [...matchParams(w), w.id];
+        out.created += (await client.query(INSERT_NEW, [...params, "pending", null])).rowCount ?? 0;
+        out.created += (await client.query(INSERT_KEV, params)).rowCount ?? 0;
       }
       await deliverPending(client, deps.senders ?? defaultSenders(), out);
     } finally {
@@ -458,15 +501,56 @@ export async function scanAlerts(deps: { senders?: Senders; q?: Queryable } = {}
 }
 
 async function deliverPending(client: Queryable, senders: Senders, out: ScanResult): Promise<void> {
+  const configured = channelStatus();
+  const available = ALERT_CHANNELS.filter((c) => configured[c].configured);
+  const reasons = ALERT_CHANNELS.filter((c) => !configured[c].configured).map((c) => configured[c].reason).join("; ");
+
+  // No channel selected at all is the admin's choice: nothing to deliver.
+  out.skipped +=
+    (
+      await client.query(
+        `UPDATE alert_deliveries d SET status = 'skipped', error = 'no channel is selected for this watchlist'
+          FROM watchlists w
+         WHERE w.id = d.watchlist_id AND w.enabled AND d.status IN ('pending', 'failed') AND cardinality(w.channels) = 0`,
+      )
+    ).rowCount ?? 0;
+  // Channels selected but not configured in this process (e.g. a worker started without
+  // SLACK_WEBHOOK_URL): keep waiting rather than dropping the alert, then give up after a day.
+  out.skipped +=
+    (
+      await client.query(
+        `UPDATE alert_deliveries d SET status = 'skipped', error = $2
+          FROM watchlists w
+         WHERE w.id = d.watchlist_id AND w.enabled AND d.status = 'pending' AND cardinality(w.channels) > 0
+           AND NOT (w.channels && $1::alert_channel[])
+           AND d.created_at < now() - make_interval(hours => $3)`,
+        [available, `no configured channel for ${UNCONFIGURED_GIVE_UP_HOURS}h: ${reasons}`, UNCONFIGURED_GIVE_UP_HOURS],
+      )
+    ).rowCount ?? 0;
+  out.waiting +=
+    (
+      await client.query(
+        `UPDATE alert_deliveries d SET error = $2
+          FROM watchlists w
+         WHERE w.id = d.watchlist_id AND w.enabled AND d.status = 'pending' AND cardinality(w.channels) > 0
+           AND NOT (w.channels && $1::alert_channel[])`,
+        [available, `waiting for channel settings: ${reasons}`],
+      )
+    ).rowCount ?? 0;
+
+  // Deliverable: enabled watchlist with at least one configured channel; failed rows after their backoff.
   const pending = await client.query<PendingRow>(
-    `SELECT d.id, d.kind, d.attempts, d.sent_channels, d.anchor_item_id, d.title, w.name AS watchlist_name, w.channels
+    `SELECT d.id, d.kind, d.attempts, d.sent_channels, d.anchor_item_id, d.title, d.created_at,
+            w.name AS watchlist_name, w.channels
        FROM alert_deliveries d JOIN watchlists w ON w.id = d.watchlist_id
-      WHERE d.status = 'pending' OR (d.status = 'failed' AND d.attempts < $1)
+      WHERE w.enabled
+        AND w.channels && $2::alert_channel[]
+        AND (d.status = 'pending'
+             OR (d.status = 'failed' AND d.attempts < $1 AND coalesce(d.next_attempt_at, '-infinity') <= now()))
       ORDER BY d.created_at, d.id
       LIMIT 200`,
-    [MAX_ATTEMPTS],
+    [MAX_ATTEMPTS, available],
   );
-  const configured = channelStatus();
   for (const d of pending.rows) {
     const done = enumArray<AlertChannel>(d.sent_channels);
     const wanted = enumArray<AlertChannel>(d.channels).filter((c) => configured[c].configured);
@@ -476,11 +560,8 @@ async function deliverPending(client: Queryable, senders: Senders, out: ScanResu
       [d.anchor_item_id],
     );
     const story = s.rows[0];
-    if (!wanted.length || !story) {
-      await client.query(`UPDATE alert_deliveries SET status = 'skipped', error = $2 WHERE id = $1`, [
-        d.id,
-        !story ? "story no longer exists" : "no configured channel is selected for this watchlist",
-      ]);
+    if (!story) {
+      await skip(client, d.id, "story no longer exists");
       out.skipped++;
       continue;
     }
@@ -491,13 +572,18 @@ async function deliverPending(client: Queryable, senders: Senders, out: ScanResu
     await client.query(
       `UPDATE alert_deliveries
           SET status = $2::alert_status, sent_channels = $3::alert_channel[], attempts = attempts + 1, error = $4,
-              sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END
+              sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END,
+              next_attempt_at = CASE WHEN $2::text = 'failed' THEN now() + make_interval(mins => $5) END
         WHERE id = $1`,
-      [d.id, failed ? "failed" : "sent", sentChannels, failed ? r.errors.join("; ") : null],
+      [d.id, failed ? "failed" : "sent", sentChannels, failed ? r.errors.join("; ") : null, retryDelayMinutes(d.attempts + 1)],
     );
     if (failed) out.failed++;
     else out.sent++;
   }
+}
+
+async function skip(client: Queryable, id: string, reason: string) {
+  await client.query(`UPDATE alert_deliveries SET status = 'skipped', error = $2 WHERE id = $1`, [id, reason]);
 }
 
 /** Enqueues alerts.scan when any watchlist is enabled (stately: coalesces with a queued scan). */
@@ -525,9 +611,9 @@ export async function recentDeliveries(limit = 30, q: Queryable = getPool()): Pr
   const r = await q.query<RecentDelivery & { sent_channels: AlertChannel[] | string }>(
     `SELECT d.id, w.name AS watchlist_name, d.kind, d.title, d.story_id, d.status, d.sent_channels, d.attempts, d.error, d.created_at
        FROM alert_deliveries d JOIN watchlists w ON w.id = d.watchlist_id
-      WHERE NOT (d.status = 'skipped' AND d.error = 'already matched when the watchlist was saved')
+      WHERE NOT (d.status = 'skipped' AND d.error = $2)
       ORDER BY d.created_at DESC, d.id LIMIT $1`,
-    [limit],
+    [limit, BASELINE_ERROR],
   );
   return r.rows.map((x) => ({ ...x, sent_channels: enumArray<AlertChannel>(x.sent_channels) }));
 }

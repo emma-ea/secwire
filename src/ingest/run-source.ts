@@ -22,7 +22,7 @@ import {
   type Source,
 } from "./adapters";
 import { afterIngest } from "./hooks";
-import { BudgetError, fetchWithBudget } from "./spend";
+import { BudgetError, fetchWithBudget, SpendLockTimeoutError } from "./spend";
 import { markRunSourceRunning, recordRetryableFailure, recordRunSourceResult, type RunSourceResult } from "./runs";
 
 export type RunSourceOptions = {
@@ -90,7 +90,7 @@ export async function runSource(sourceId: string, opts: RunSourceOptions): Promi
         now: opts.now,
         range: opts.range,
         kevItemLookbackDays: getEnv().KEV_ITEM_LOOKBACK_DAYS,
-      });
+      }, { client });
     } catch (err) {
       if (err instanceof BudgetError) {
         // Paid source switched off or over its monthly cap: a skip, not a source failure.
@@ -106,7 +106,10 @@ export async function runSource(sourceId: string, opts: RunSourceOptions): Promi
       fetched.status === "not_modified"
         ? result("not_modified", started, { httpStatus: fetched.httpStatus })
         : {
-            ...result("succeeded", started, { httpStatus: fetched.httpStatus }),
+            ...result("succeeded", started, {
+              httpStatus: fetched.httpStatus,
+              error: fetched.partialError ? `partial: ${fetched.partialError}` : null,
+            }),
             itemsSeen: fetched.items.length,
             itemsNew: persisted.itemsNew,
             itemsUpdated: persisted.itemsUpdated,
@@ -153,6 +156,8 @@ export function isRetryable(err: unknown): boolean {
   if (err instanceof SafeFetchError) {
     return ["timeout", "network", "dns"].includes(err.code);
   }
+  // Another paid fetch of the same provider held the spend lock too long: try again later.
+  if (err instanceof SpendLockTimeoutError) return true;
   if (err instanceof SourceHttpError) {
     return err.httpStatus === 408 || err.httpStatus === 429 || err.httpStatus >= 500;
   }

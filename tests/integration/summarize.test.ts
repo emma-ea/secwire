@@ -9,7 +9,7 @@ import { QUEUES } from "@/ingest/boss";
 import { clusterItems } from "@/ingest/cluster";
 import { handleClusterJob, handleSummarizeJob } from "@/ingest/handlers";
 import { monthSpend } from "@/ingest/spend";
-import { enqueueSummaries, storiesNeedingSummary, summarizeStory, type SummaryClient } from "@/ingest/summarize";
+import { enqueueSummaries, storiesNeedingSummary, summarizeStory, typicalSummaryCostUsd, type SummaryClient } from "@/ingest/summarize";
 import { hashCanonicalUrl } from "@/lib/url";
 import { addSource, resetDb, startTestBoss } from "./helpers";
 
@@ -159,14 +159,30 @@ describe("AI summaries (Phase 3)", () => {
     expect(await enqueueSummaries({ boss })).toBe(0);
   });
 
-  it("API errors: 400 is dropped, 429/5xx are rethrown for pg-boss to retry", async () => {
+  it("API errors: a rejected request (400) is recorded so the story isn't re-queued; 429/5xx are rethrown for pg-boss", async () => {
     const story = await storyFor("CVE-2026-0001");
-    const bad = new Anthropic.BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "bad" } }, "bad", new Headers());
-    expect(await handleSummarizeJob({ data: { storyId: story.id } }, { client: fakeClient({ error: bad }) })).toEqual({ status: "skipped", reason: "API error 400" });
     const limited = new Anthropic.RateLimitError(429, { type: "error", error: { type: "rate_limit_error", message: "slow" } }, "slow", new Headers());
     await expect(handleSummarizeJob({ data: { storyId: story.id } }, { client: fakeClient({ error: limited }) })).rejects.toBe(limited);
+    expect(await storiesNeedingSummary()).toEqual([story.id]); // a retryable error leaves it eligible
+
+    const bad = new Anthropic.BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "bad" } }, "bad", new Headers());
+    expect(await handleSummarizeJob({ data: { storyId: story.id } }, { client: fakeClient({ error: bad }) })).toEqual({ status: "skipped", reason: "API error 400" });
+    expect(await storyFor("CVE-2026-0001")).toMatchObject({ summary: null, summary_item_count: 2 });
+    expect(await storiesNeedingSummary()).toEqual([]);
+    expect(await enqueueSummaries({ boss })).toBe(0);
     // The SDK threw before returning usage, so nothing is recorded.
     expect((await monthSpend(getPool(), "anthropic")).requests).toBe(0);
+  });
+
+  it("over the monthly cap, nothing is queued (instead of jobs that would only be refused)", async () => {
+    setAi({ ANTHROPIC_API_KEY: "k", AI_MONTHLY_CAP_USD: "0.001" });
+    expect(typicalSummaryCostUsd()).toBeGreaterThan(0);
+    expect(typicalSummaryCostUsd()).toBeLessThan(0.001);
+    expect(await enqueueSummaries({ boss })).toBe(1);
+    await boss.deleteAllJobs(QUEUES.summarize);
+    await getPool().query("INSERT INTO api_spend (provider, month, usd) VALUES ('anthropic', to_char(now(), 'YYYY-MM'), 0.0009)");
+    expect(await enqueueSummaries({ boss })).toBe(0);
+    expect(await boss.findJobs(QUEUES.summarize, { queued: true })).toEqual([]);
   });
 
   it("clustering enqueues one summarize job per story that needs it (stately: re-enqueue coalesces)", async () => {

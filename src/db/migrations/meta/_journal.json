@@ -57,6 +57,13 @@
       "when": 1794174434083,
       "tag": "0007_phase3_watchlists_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794176757092,
+      "tag": "0008_alert_retry_backoff",
+      "breakpoints": true
     }
   ]
 }

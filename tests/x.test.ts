@@ -24,7 +24,7 @@ describe("X config and request", () => {
   it("builds one query per account, pre-filtered server-side", () => {
     expect(xQuery("alice", "relevant")).toBe("from:alice -is:retweet -is:reply (has:links OR CVE)");
     expect(xQuery("alice", "all")).toBe("from:alice -is:retweet -is:reply");
-    const u = new URL(xSearchUrl("alice", xConfig({ config: { accounts: ["alice"] } }), "2026-11-08T11:00:00Z"));
+    const u = new URL(xSearchUrl("alice", xConfig({ config: { accounts: ["alice"] } }), { startTime: "2026-11-08T11:00:00Z" }));
     expect(u.origin + u.pathname).toBe(X_SEARCH_URL);
     expect(Object.fromEntries(u.searchParams)).toMatchObject({ max_results: "20", start_time: "2026-11-08T11:00:00Z", "tweet.fields": "created_at,entities,note_tweet" });
   });

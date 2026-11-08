@@ -472,7 +472,10 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
 - **One search per account.** The adapter calls `GET /2/tweets/search/recent` once per configured account, with `from:<account> -is:retweet -is:reply`.
   - Requests are free; posts are what costs. So per-account requests cost nothing extra and tell us each post's author without a paid user lookup.
   - With `filter: "relevant"`, the query also adds `(has:links OR CVE)`, so we don't pay for posts the local filter would drop anyway.
-  - Only the first page is read (`maxResults`, default 20, from 10 to 100), which bounds each fetch's cost. With the 10-minute overlap on `start_time`, a busy account could lose posts past the first page.
+  - Only the first page is read (`maxResults`, default 20, from 10 to 100), which bounds each fetch's cost. A very busy account could lose posts past the first page.
+  - **Per-account cursors** (fixed after code review). Each account's newest post id and fetch time are stored in `sources.etag` as `x1:{json}`. `etag` is the adapter contract's opaque validator, which runSource saves only after a successful fetch. Later fetches use `since_id`, so posts already paid for are never re-read. An account with no cursor (new, or idle for more than 6.5 days, since `since_id` must be inside the 7-day search window) uses a 24h `start_time`.
+  - **Partial failure.** The adapter stops at the first failing account, since a 429 would repeat for the rest. If at least one account succeeded, the fetch still counts as successful: those posts and cursors are saved, and the run row shows `partial: @account: …`. Only the failed account is asked again on the next run. If the first account fails, the whole fetch fails and is retried as before.
+  - Billable posts are counted before the strict schema parse, so posts X returned in an unexpected shape still count toward the cap.
 - **`tweet.fields`, not `post.fields`.** The 2026 docs page lists `post.fields`, but every working example and third-party guide still uses `tweet.fields`. The parser tolerates missing fields either way.
 - **Token safety:**
   - The source URL must be exactly `https://api.x.com/2/tweets/search/recent`, because admins can edit source URLs and the bearer token must never go anywhere else.
@@ -481,6 +484,7 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - takes a per-provider advisory lock;
   - refuses the call when month-to-date spend plus the call's **worst case** (accounts × maxResults × price) would exceed the cap;
   - records actual usage per request, even when the fetch fails part-way.
+  - Lock waits poll `pg_try_advisory_lock` until a 2-minute deadline or the caller's abort signal (the admin Test's 20s timeout). The lock is taken inside the cleanup block, so the connection is always released. runSource passes its own connection, so a paid fetch uses one pooled connection, not two. A wait that times out is a retryable failure.
   - Holding the lock across the call means two workers can't both pass the check. The cap can be undershot by up to one worst-case fetch, but never overshot.
 - **Skips are not failures.**
   - With the flag off or no token, the run row says `skipped_disabled` with the reason.
@@ -506,7 +510,8 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - `recluster` rebuilds stories with new ids, so it causes re-summarization. That is bounded by the 14-day window and the cap.
 - **Failures:**
   - A refusal or unusable output stores `summary = NULL` with the item count, so the story isn't retried until items join.
-  - A 4xx from the API, other than 408/409/429, is logged and dropped. Rate limits, overload and network errors are retried: the SDK retries twice, then pg-boss twice.
+  - A 4xx from the API, other than 408/409/429, is logged and recorded like a refusal (`summary = NULL`, `summary_item_count = item_count`), so the story isn't re-queued on every tick. This was a code-review fix; before it, these stories were retried forever. A configuration error such as a bad key or an unknown model therefore marks the recent stories once, and they get summaries again only when new items join. Rate limits, overload and network errors are retried: the SDK retries twice, then pg-boss twice.
+  - Summary jobs aren't queued at all while the monthly cap can't fit a typical summary (about 8K characters of coverage plus `max_tokens`), instead of queuing jobs that would only be refused.
 - **Cost:**
   - Under the "anthropic" provider in `api_spend`. The worst case is estimated input (about 3.5 characters per token) plus `max_tokens` output, and the actual cost comes from `usage`.
   - Prices come from a built-in table (Haiku/Sonnet/Opus 5.5, from the Claude API pricing table cached 2026-10-06). A model missing from the table needs `AI_INPUT_USD_PER_MTOK` / `AI_OUTPUT_USD_PER_MTOK`; without them the feature stays off, because the cap couldn't be enforced.
@@ -530,14 +535,19 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - The optional filters are min CVSS, KEV only and ransomware only.
   - Only stories active in the last 7 days are matched.
 - **At most once:**
-  - `alert_deliveries` is unique on `(watchlist, anchor item, kind)`. The anchor is the story's earliest item, because `recluster` gives stories new ids but rebuilds the same groups; the test reclusters and checks that nothing is resent.
+  - `alert_deliveries` is unique on `(watchlist, anchor item, kind)`. The anchor is the story's earliest item when the row is written. `recluster` gives stories new ids but rebuilds the same groups; the test reclusters and checks that nothing is resent.
+  - **Duplicate check covers every item** (code-review fix). A story is alerted only if none of its current items is the anchor of an existing row of that kind. The anchor alone isn't enough: when an older item joins later, it becomes the earliest. A common case is an article arriving after the Bluesky post that linked to it.
+  - Matching and inserting is one `INSERT … SELECT … ON CONFLICT DO NOTHING` per watchlist and kind, with no row limit. Baseline uses the same statement, so a broad watchlist baselines every match, not just the 500 most recent.
   - Kinds: `new` on the first match, and `kev` once when a story alerted while not in KEV later enters KEV.
   - Inserts are `ON CONFLICT DO NOTHING`, and only the rows actually inserted are delivered.
 - **Baseline on save.** Creating or editing a watchlist writes `new` rows with status `skipped` for every story that already matches, so a new watchlist doesn't flood Slack with last week's news. The editor's "Preview matches" shows exactly those stories.
 - **Delivery:**
   - The `alerts.scan` job (stately, concurrency 1) runs after every cluster job, after an `enrich.cve` that refreshed stories, and on every tick. The tick run also retries failures.
   - A `pg_try_advisory_lock` means a second scanner skips instead of double-sending.
-  - Failed rows retry up to 3 attempts, and only to channels that haven't accepted the alert (`sent_channels`).
+  - **Retries.** Failed rows retry with backoff (2, 10, 30, 60, 120, 240 and 480 minutes; 8 attempts, about 15 hours in all), via `next_attempt_at` (migration 0008). They resend only to channels that haven't accepted the alert (`sent_channels`). Before the code-review fix this was 3 attempts on consecutive scans, which a short outage could use up in minutes.
+  - **Unconfigured channels.** If a watchlist's selected channels aren't configured in the worker's env, its alerts stay pending ("waiting for channel settings") and are delivered once the settings appear. They're skipped only after 24 hours. A watchlist with no channel selected skips its alerts right away.
+  - **Pausing.** Pausing a watchlist marks its pending and failed alerts skipped ("watchlist paused"), and delivery only picks rows of enabled watchlists. Re-enabling baselines like any save, so nothing queued during the pause fires.
+  - **Whole-word terms with punctuation.** `\m`/`\M` are added only on sides where the term starts or ends with a word character, so `.NET` and `C++` match their titles.
   - The message is built from the story's current state (title, KEV/CVSS/EPSS, CVEs, vendors, AI summary if any, and a link when `APP_URL` is set).
 - **Injection safety:**
   - Slack text escapes `& < >`, so feed text can't produce `<!channel>` pings or fake links.
@@ -555,3 +565,15 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - "Send test" reported that no channel is configured. Deleting it removed its rows.
 - The watchlist API returns 401 without a session and 403 with a foreign Origin.
 - Not verified live, for lack of credentials: X, the Anthropic API, Slack and SMTP. Each is covered by fixture or fake-client tests.
+
+### Code review fixes (2026-11-08)
+`/code-review` on `8003748..HEAD` reported 10 issues, and all were fixed with regression tests:
+- **Alerts** (`tests/integration/alerts.test.ts`):
+  - duplicate alert when an older item joins a story;
+  - paused watchlists still delivering;
+  - alerts dropped when channels are unconfigured or a short outage used up the retries;
+  - the 500-row match limit;
+  - `.NET`/`C++` terms never matching;
+  - one database insert per matched story.
+- **Summaries** (`tests/integration/summarize.test.ts`): rejected requests re-queued forever, and jobs queued while over the cap.
+- **X and spending** (`tests/integration/spend.test.ts`): X re-billing after a partial failure, and the spend lock leaking a connection and ignoring timeouts.
