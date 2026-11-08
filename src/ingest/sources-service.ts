@@ -2,7 +2,7 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/client";
-import { items, sourceCategory, sources, sourceType } from "../db/schema";
+import { sourceCategory, sources, sourceType } from "../db/schema";
 import { parseHttpUrl } from "../lib/url";
 import { activeSourceIds } from "./runs";
 
@@ -97,7 +97,9 @@ export async function listSourcesForAdmin() {
   const rows = await db
     .select({
       source: sources,
-      items24h: sql<number>`(SELECT count(*)::int FROM ${items} WHERE ${items.sourceId} = ${sources.id} AND ${items.fetchedAt} > now() - interval '24 hours')`,
+      // Written with explicit aliases: inside select({...}) Drizzle renders
+      // column refs unqualified, so ${sources.id} would bind to items.id here.
+      items24h: sql<number>`(SELECT count(*)::int FROM items i WHERE i.source_id = "sources"."id" AND i.fetched_at > now() - interval '24 hours')`,
     })
     .from(sources)
     .orderBy(asc(sources.id));
