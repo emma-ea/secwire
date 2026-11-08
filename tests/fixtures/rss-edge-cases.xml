@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel>
+  <title>Edge Case Feed</title>
+  <link>https://edge.example.com/</link>
+  <description>Hand-written fixture covering parser edge cases</description>
+
+  <!-- HTML in title + description, CVE IDs with en-dash and lowercase, tracking params -->
+  <item>
+    <title><![CDATA[<b>Critical</b> flaw in Acme VPN &amp; Gateway (CVE–2026–1234)]]></title>
+    <link>https://edge.example.com/acme-vpn?utm_source=rss</link>
+    <guid isPermaLink="false">edge-1</guid>
+    <pubDate>Fri, 06 Nov 2026 10:00:00 GMT</pubDate>
+    <dc:creator>Jane Doe</dc:creator>
+    <description><![CDATA[<p>Attackers exploit cve-2026-5678 in the wild.<script>alert('x')</script> <img src=x onerror=alert(1)> More at <a href="https://nvd.nist.gov/vuln/detail/CVE-2026-9999">NVD</a>.</p>]]></description>
+    <content:encoded><![CDATA[<p>FULL ARTICLE BODY that must never be stored.</p>]]></content:encoded>
+  </item>
+
+  <!-- javascript: link must be dropped entirely -->
+  <item>
+    <title>Malicious link item</title>
+    <link>javascript:alert(document.cookie)</link>
+    <guid>edge-2</guid>
+  </item>
+
+  <!-- duplicate guid: only the first is kept -->
+  <item>
+    <title>First copy</title>
+    <link>https://edge.example.com/dup</link>
+    <guid>edge-dup</guid>
+  </item>
+  <item>
+    <title>Second copy</title>
+    <link>https://edge.example.com/dup2</link>
+    <guid>edge-dup</guid>
+  </item>
+
+  <!-- no guid: falls back to link; bad date -> null; range only first captured -->
+  <item>
+    <title>Patch Tuesday fixes CVE-2026-2000 through -2005</title>
+    <link>https://edge.example.com/patch-tuesday</link>
+    <pubDate>not a date</pubDate>
+  </item>
+
+  <!-- empty title: skipped -->
+  <item>
+    <title>   </title>
+    <link>https://edge.example.com/empty</link>
+    <guid>edge-empty</guid>
+  </item>
+</channel>
+</rss>
