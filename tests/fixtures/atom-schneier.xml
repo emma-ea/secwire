@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><feed
+	xmlns="http://www.w3.org/2005/Atom"
+	xmlns:thr="http://purl.org/syndication/thread/1.0"
+	xml:lang="en-US"
+	>
+	<title type="text">Schneier on Security</title>
+	<subtitle type="text"></subtitle>
+
+	<updated>2026-11-06T22:05:29Z</updated>
+
+	<link rel="alternate" type="text/html" href="https://www.schneier.com/" />
+	<id>https://www.schneier.com/feed/atom/</id>
+	<link rel="self" type="application/atom+xml" href="https://www.schneier.com/feed/atom/" />
+
+	
+<icon>https://www.schneier.com/wp-content/uploads/2020/06/cropped-favicon-1-32x32.png</icon>
+	<entry>
+		<author>
+			<name>Bruce Schneier</name>
+					</author>
+
+		<title type="html"><![CDATA[Friday Squid Blogging: New Jurassic Squid Predecessors]]></title>
+		<link rel="alternate" type="text/html" href="https://www.schneier.com/blog/archives/2026/11/friday-squid-blogging-new-jurassic-squid-predecessors.html" />
+
+		<id>https://www.schneier.com/?p=72854</id>
+		<updated>2026-11-06T22:05:29Z</updated>
+		<published>2026-11-06T22:05:12Z</published>
+		<category scheme="https://www.schneier.com/" term="Uncategorized" /><category scheme="https://www.schneier.com/" term="squid" />
+		<summary type="html"><![CDATA[<p>News story: &#8220;<a href="https://www.sciencedaily.com/releases/2026/10/261019093434.htm">Scientists discover a bizarre Jurassic &#8216;squid&#8217; unlike anything ever seen</a>.&#8221;</p>
+<blockquote><p>Scientists have identified the &#8220;fattest&#8221; belemnite ever discovered, a bizarre, barrel-shaped squid relative that lived in Wyoming&#8217;s ancient seas 160 million years ago. The exceptionally rare fossils reveal a creature unlike anything previously known, potentially a predator of smaller squid-like animals and a surprising survivor of a supposedly vanished family.</p></blockquote>
+<p>As usual, you can also use this squid post to talk about the security stories in the news that I haven&#8217;t covered...</p>]]></summary>
+
+					<content type="html" xml:base="https://www.schneier.com/blog/archives/2026/11/friday-squid-blogging-new-jurassic-squid-predecessors.html"><![CDATA[<p>News story: &#8220;<a href="https://www.sciencedaily.com/releases/2026/10/261019093434.htm">Scientists discover a bizarre Jurassic &#8216;squid&#8217; unlike anything ever seen</a>.&#8221;</p>
+<blockquote><p>Scientists have identified the &#8220;fattest&#8221; belemnite ever discovered, a bizarre, barrel-shaped squid relative that lived in Wyoming&#8217;s ancient seas 160 million years ago. The exceptionally rare fossils reveal a creature unlike anything previously known, potentially a predator of smaller squid-like animals and a surprising survivor of a supposedly vanished family.</p></blockquote>
+<p>As usual, you can also use this squid post to talk about the security stories in the news that I haven&#8217;t covered.</p>
+<p><a href="https://www.schneier.com/blog/archives/2024/06/new-blog-moderation-policy.html">Blog moderation policy.</a></p>
+]]></content>
+		
+					<link rel="replies" type="text/html" href="https://www.schneier.com/blog/archives/2026/11/friday-squid-blogging-new-jurassic-squid-predecessors.html#comments" thr:count="11" />
+			<link rel="replies" type="application/atom+xml" href="https://www.schneier.com/blog/archives/2026/11/friday-squid-blogging-new-jurassic-squid-predecessors.html/feed/atom/" thr:count="11" />
+			<thr:total>11</thr:total>
+			</entry>
+<entry>
+		<author>
+			<name>Bruce Schneier</name>
+					</author>
+
+		<title type="html"><![CDATA[Pinpointing Location of Videos from Background Airplane Sounds]]></title>
+		<link rel="alternate" type="text/html" href="https://www.schneier.com/blog/archives/2026/11/pinpointing-location-of-videos-from-background-airplane-sounds.html" />
+
+		<id>https://www.schneier.com/?p=72894</id>
+		<updated>2026-11-06T16:28:27Z</updated>
+		<published>2026-11-06T14:57:48Z</published>
+		<category scheme="https://www.schneier.com/" term="Uncategorized" /><category scheme="https://www.schneier.com/" term="air travel" /><category scheme="https://www.schneier.com/" term="geolocation" /><category scheme="https://www.schneier.com/" term="videos" />
+		<summary type="html"><![CDATA[<p>This is <a href="https://gizmodo.com/a-youtuber-figured-out-how-to-find-almost-anyone-using-airplane-sounds-2000835861">fascinating</a>:</p>
+<blockquote><p>The video describes a technique that can reveal where an otherwise unidentifiable recording was made by analyzing its audio for the faint sounds of passing aircraft. The technique is both fascinating and frightening.</p>
+<p>It works by looking at Doppler curves, which plot the way a plane’s sound changes as it passes overhead because of the Doppler effect. This is the same familiar Doppler effect that causes the frequency of a siren to rise as it approaches and then fall as it passes by and moves away. More generally, it’s the phenomenon whereby the frequency of a wave perceived by an observer changes when the observer and the source of the wave are moving in relation to one another...</p></blockquote>]]></summary>
+
+					<content type="html" xml:base="https://www.schneier.com/blog/archives/2026/11/pinpointing-location-of-videos-from-background-airplane-sounds.html"><![CDATA[<p>This is <a href="https://gizmodo.com/a-youtuber-figured-out-how-to-find-almost-anyone-using-airplane-sounds-2000835861">fascinating</a>:</p>
+<blockquote><p>The video describes a technique that can reveal where an otherwise unidentifiable recording was made by analyzing its audio for the faint sounds of passing aircraft. The technique is both fascinating and frightening.</p>
+<p>It works by looking at Doppler curves, which plot the way a plane’s sound changes as it passes overhead because of the Doppler effect. This is the same familiar Doppler effect that causes the frequency of a siren to rise as it approaches and then fall as it passes by and moves away. More generally, it’s the phenomenon whereby the frequency of a wave perceived by an observer changes when the observer and the source of the wave are moving in relation to one another.</p>
+<p>[&#8230;]</p>
+<p>It’s sound that’s relevant here, though, and specifically the sound of aeroplanes. Early in his video, Colsto brings up a map of the flights that were in the air at the time the video he’s tracing was recorded. Much of this information is publicly available. Aircraft equipped with Automatic Dependent Surveillance–Broadcast (ADS-B) transmit data about their position, velocity, and altitude, which flight-tracking services collect and make available to the public. While not every plane is tracked, the system provides an enormous amount of information about aircraft movements.</p></blockquote>
+]]></content>
+		
+					<link rel="replies" type="text/html" href="https://www.schneier.com/blog/archives/2026/11/pinpointing-location-of-videos-from-background-airplane-sounds.html#comments" thr:count="13" />
+			<link rel="replies" type="application/atom+xml" href="https://www.schneier.com/blog/archives/2026/11/pinpointing-location-of-videos-from-background-airplane-sounds.html/feed/atom/" thr:count="13" />
+			<thr:total>13</thr:total>
+			</entry>
+<entry>
+		<author>
+			<name>Bruce Schneier</name>
+					</author>
+
+		<title type="html"><![CDATA[AIs Hacking the Law]]></title>
+		<link rel="alternate" type="text/html" href="https://www.schneier.com/blog/archives/2026/11/ais-hacking-the-law.html" />
+
+		<id>https://www.schneier.com/?p=72886</id>
+		<updated>2026-11-03T12:01:01Z</updated>
+		<published>2026-11-03T12:01:00Z</published>
+		<category scheme="https://www.schneier.com/" term="Uncategorized" /><category scheme="https://www.schneier.com/" term="AI" /><category scheme="https://www.schneier.com/" term="hacking" /><category scheme="https://www.schneier.com/" term="laws" />
+		<summary type="html"><![CDATA[<p>In both a 2021 <a href="https://www.belfercenter.org/publication/coming-ai-hackers">essay</a> and my 2022 book, <i><a href="https://www.schneier.com/books/a-hackers-mind/">A Hacker&#8217;s Mind</a></i>, I talk about AIs finding vulnerabilities and exploits&#8212;hacking&#8212;the legal system.</p>
+<p><a href="https://www.felixringe.com/legal-exploits/">Here&#8217;s</a> some demonstrations of this from Germany:</p>
+<blockquote><p>Legal systems encode the foundations of social order in natural language. Similar to computer systems, the written law can contain vulnerabilities that invite exploitation.1 Courts absorb most exploits through interpretation, and such vulnerabilities rarely surface in the first place. With highly capable AI systems enabling the discovery of vulnerabilities at unprecedented scale, we believe the latter could change...</p></blockquote>]]></summary>
+
+					<content type="html" xml:base="https://www.schneier.com/blog/archives/2026/11/ais-hacking-the-law.html"><![CDATA[<p>In both a 2021 <a href="https://www.belfercenter.org/publication/coming-ai-hackers">essay</a> and my 2022 book, <i><a href="https://www.schneier.com/books/a-hackers-mind/">A Hacker&#8217;s Mind</a></i>, I talk about AIs finding vulnerabilities and exploits&#8212;hacking&#8212;the legal system.</p>
+<p><a href="https://www.felixringe.com/legal-exploits/">Here&#8217;s</a> some demonstrations of this from Germany:</p>
+<blockquote><p>Legal systems encode the foundations of social order in natural language. Similar to computer systems, the written law can contain vulnerabilities that invite exploitation.1 Courts absorb most exploits through interpretation, and such vulnerabilities rarely surface in the first place. With highly capable AI systems enabling the discovery of vulnerabilities at unprecedented scale, we believe the latter could change.</p>
+<p>In testing this hypothesis, we have identified a substantial number of vulnerabilities in the German legal system using LLMs. To our knowledge, none of these have been previously recorded. We share a selection of vulnerabilities below, and present potential exploits for each. We share only those vulnerabilities whose exploitation we believe would not cause serious harm.</p>
+<p>We believe that with cheap legal reasoning proliferating, AI systems could jeopardize the functioning of today&#8217;s legal systems. In such a world, lawmakers would need to significantly harden the process of legislation, for example by leveraging advanced AI themselves.</p></blockquote>
+<p>Still in its early stages, but definitely something that&#8217;s coming.</p>
+]]></content>
+		
+					<link rel="replies" type="text/html" href="https://www.schneier.com/blog/archives/2026/11/ais-hacking-the-law.html#comments" thr:count="11" />
+			<link rel="replies" type="application/atom+xml" href="https://www.schneier.com/blog/archives/2026/11/ais-hacking-the-law.html/feed/atom/" thr:count="11" />
+			<thr:total>11</thr:total>
+			</entry>
+	</feed>
