@@ -6,10 +6,21 @@ import { eq, lt, sql } from "drizzle-orm";
 import type { Job, PgBoss } from "pg-boss";
 import { getDb } from "../db/client";
 import { appSettings, ingestionRuns, loginAttempts, sources, workerHeartbeats } from "../db/schema";
-import { QUEUE_DEFINITIONS, QUEUES, type ClusterJob, type EnrichCveJob, type EnrichRefreshJob, type IngestSourceJob } from "./boss";
+import Anthropic from "@anthropic-ai/sdk";
+import {
+  QUEUE_DEFINITIONS,
+  QUEUES,
+  type ClusterJob,
+  type EnrichCveJob,
+  type EnrichRefreshJob,
+  type IngestSourceJob,
+  type SummarizeStoryJob,
+} from "./boss";
 import { InvalidCveIdError, type EnrichDeps } from "./enrich/service";
 import { enqueueClusterIfPending } from "./hooks";
 import { runSource, type RunSourceOptions } from "./run-source";
+import { BudgetError } from "./spend";
+import { enqueueSummaries, summarizeStory, type SummaryClient } from "./summarize";
 import {
   completeJobRun,
   createJobRun,
@@ -32,6 +43,7 @@ export async function handleTick(now = new Date()): Promise<{ runId: string | nu
   await reconcileStaleJobRuns(db);
   // Self-healing: items whose post-ingest cluster job was lost still get clustered.
   await enqueueClusterIfPending().catch((err: unknown) => console.error("[tick] cluster enqueue failed:", err));
+  await enqueueSummaries().catch((err: unknown) => console.error("[tick] summary enqueue failed:", err));
 
   const settings = await getSettings(db);
   if (!settings.schedulerEnabled) return { runId: null, due: [] };
@@ -161,8 +173,29 @@ export async function handleEnrichRefreshJob(
 }
 
 /** cluster.items: clusters unassigned items, or reclusters when `since` is set. */
-export async function handleClusterJob(job: JobLike<ClusterJob>) {
-  return withJobRun(QUEUES.cluster, job, () => runCluster(getDb(), job.data.runId, job.data));
+export async function handleClusterJob(job: JobLike<ClusterJob>, deps: { boss?: PgBoss } = {}) {
+  const r = await withJobRun(QUEUES.cluster, job, () => runCluster(getDb(), job.data.runId, job.data));
+  // Stories that gained items may need a new summary (no-op when AI summaries are off).
+  await enqueueSummaries({ boss: deps.boss }).catch((err: unknown) => console.error("[cluster] summary enqueue failed:", err));
+  return r;
+}
+
+/**
+ * summarize.story. Off/over-cap and requests the API rejects as invalid are
+ * logged and dropped (retrying can't help); rate limits, overload and network
+ * errors throw so pg-boss retries.
+ */
+export async function handleSummarizeJob(job: Pick<Job<SummarizeStoryJob>, "data">, deps: { client?: SummaryClient } = {}) {
+  try {
+    return await summarizeStory(job.data.storyId, { client: deps.client });
+  } catch (err) {
+    if (err instanceof BudgetError) return { status: "skipped" as const, reason: err.message };
+    if (err instanceof Anthropic.APIError && err.status !== undefined && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 409 && err.status !== 429) {
+      console.error(`[summarize] ${job.data.storyId}: request rejected (${err.status}): ${err.message}`);
+      return { status: "skipped" as const, reason: `API error ${err.status}` };
+    }
+    throw err;
+  }
 }
 
 /** maintenance.prune: old runs (cascade to run sources), login attempts, dead heartbeats. */

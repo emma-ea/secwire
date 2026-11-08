@@ -45,6 +45,19 @@ export default async function StoryPage({ params }: PageProps<"/story/[id]">) {
         </span>
       </div>
 
+      {story.summary && (
+        <section className="mt-3 max-w-4xl rounded border border-foreground/10 bg-foreground/[0.03] px-3 py-2" aria-label="AI summary">
+          <p className="text-sm leading-relaxed">{story.summary}</p>
+          <p className="mt-1 text-[11px] text-muted">
+            AI summary of {story.summary_item_count ?? "?"} item{story.summary_item_count === 1 ? "" : "s"}
+            {story.summary_item_count !== null && story.summary_item_count < story.item_count
+              ? ` (${story.item_count - story.summary_item_count} newer not yet included)`
+              : ""}
+            {story.summary_model ? ` · ${story.summary_model}` : ""} · may contain errors; check the sources below
+          </p>
+        </section>
+      )}
+
       {cves.length > 0 && (
         <section className="mt-4 space-y-2" aria-label="Vulnerabilities">
           <h2 className="text-xs font-semibold tracking-wide text-foreground/70 uppercase">

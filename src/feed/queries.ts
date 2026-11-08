@@ -31,6 +31,10 @@ export type StoryListRow = {
   source_ids: string[];
   /** "Vendor Product" pairs from KEV, else NVD. */
   vendor_products: string[];
+  /** Phase 3 AI summary (plain text) and how many items it was written from. */
+  summary: string | null;
+  summary_item_count: number | null;
+  summary_model: string | null;
 };
 
 type KeyColumns = { k_ts: string; k_count: string; k_kev: "t" | "f"; k_epss: string; k_cvss: string };
@@ -40,7 +44,7 @@ const STORY_COLUMNS = `
   s.id, s.title, s.first_seen_at, s.last_activity_at, s.item_count,
   s.max_cvss::float8 AS max_cvss, s.has_kev, s.max_epss::float8 AS max_epss,
   s.max_epss_percentile::float8 AS max_epss_percentile, s.has_ransomware,
-  s.cve_ids, s.vendors, s.source_ids,
+  s.cve_ids, s.vendors, s.source_ids, s.summary, s.summary_item_count, s.summary_model,
   coalesce(vp.vendor_products, '{}') AS vendor_products`;
 
 const VENDOR_PRODUCTS_JOIN = `

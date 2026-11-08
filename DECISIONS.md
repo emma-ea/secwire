@@ -494,3 +494,26 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - `X_ENABLED=false` and `X_MONTHLY_CAP_USD=10`.
 - **Seed.** `x-researchers` (5 accounts) is seeded through normal verification. With X off, verification fails and it lands disabled with the reason in `last_error`; nothing is ever fetched without the flag.
 - **Not verified live.** There is no X token here; everything is tested with fixtures.
+
+### AI summaries (migration 0006)
+- **Model:** `claude-haiku-5-5` by default ($0.10 / $0.50 per million tokens), changeable with `SUMMARY_MODEL`. The plan proposed Haiku and the user approved it. The request uses `output_config.effort: "low"` and `max_tokens: 1024`, and has no tools.
+- **One summary per story, regenerated only when items join.**
+  - `stories.summary_item_count` records how many items the summary was written from. A story needs a new summary when `item_count` differs from it.
+  - Only stories with at least `SUMMARY_MIN_ITEMS` items (default 2) are summarized, since a one-item story's summary would repeat its excerpt.
+  - Only stories active in the last 14 days are summarized, so turning the feature on doesn't summarize history.
+- **Enrichment doesn't trigger a new summary.** CVE data is in the prompt, but per the SPEC wording only new items trigger regeneration.
+- **When jobs are queued.** `summarize.story` (stately, singletonKey = story id, concurrency 1) is queued after every cluster job and on every tick as self-healing.
+  - `recluster` rebuilds stories with new ids, so it causes re-summarization. That is bounded by the 14-day window and the cap.
+- **Failures:**
+  - A refusal or unusable output stores `summary = NULL` with the item count, so the story isn't retried until items join.
+  - A 4xx from the API, other than 408/409/429, is logged and dropped. Rate limits, overload and network errors are retried: the SDK retries twice, then pg-boss twice.
+- **Cost:**
+  - Under the "anthropic" provider in `api_spend`. The worst case is estimated input (about 3.5 characters per token) plus `max_tokens` output, and the actual cost comes from `usage`.
+  - Prices come from a built-in table (Haiku/Sonnet/Opus 5.5, from the Claude API pricing table cached 2026-10-06). A model missing from the table needs `AI_INPUT_USD_PER_MTOK` / `AI_OUTPUT_USD_PER_MTOK`; without them the feature stays off, because the cap couldn't be enforced.
+  - `AI_MONTHLY_CAP_USD` defaults to 5.
+- **On/off.** The feature is on exactly when `ANTHROPIC_API_KEY` is set in env. Credentials the SDK could find elsewhere (an `ant` profile) don't count, so it never turns on by accident.
+- **Prompt injection.**
+  - Titles and excerpts go inside `<story>…</story>`, and any `<story>` tags inside them are removed.
+  - The system prompt says the content is quoted material, not instructions. There are no tools, so the worst a malicious feed item can do is skew its own story's summary.
+  - The output is cleaned to one plain-text paragraph (markdown removed, at most 700 characters) and rendered as text. The story page labels it "AI summary … may contain errors" and says when newer items aren't included yet.
+- **Not verified live.** There is no Anthropic key in this environment; tests use a fake client.

@@ -38,6 +38,14 @@ export const envSchema = z
     X_MONTHLY_CAP_USD: z.coerce.number().min(0).default(10),
     /** Price per post returned (docs.x.com pricing, checked 2026-11-08). */
     X_POST_READ_USD: z.coerce.number().min(0).default(0.005),
+    // Phase 3: AI story summaries. Off unless an API key is set.
+    ANTHROPIC_API_KEY: optionalString,
+    SUMMARY_MODEL: z.string().trim().min(1).default("claude-haiku-5-5"),
+    SUMMARY_MIN_ITEMS: z.coerce.number().int().min(1).default(2),
+    AI_MONTHLY_CAP_USD: z.coerce.number().min(0).default(5),
+    /** USD per million tokens; only needed for a SUMMARY_MODEL missing from the built-in price table. */
+    AI_INPUT_USD_PER_MTOK: z.coerce.number().min(0).optional(),
+    AI_OUTPUT_USD_PER_MTOK: z.coerce.number().min(0).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== "production") return;

@@ -159,6 +159,11 @@ export const stories = pgTable(
     hasKev: boolean().notNull().default(false),
     maxEpss: numeric({ mode: "number" }),
     summary: text(),
+    // Phase 3 AI summaries: regenerate only when item_count moves past the
+    // count the current summary was written for (see src/ingest/summarize.ts).
+    summaryItemCount: integer(),
+    summaryModel: text(),
+    summaryGeneratedAt: timestamptz(),
     // Denormalized for the feed (Phase 2, migration 0003). Recomputed by
     // refreshStories() whenever items join or linked CVEs are enriched.
     maxEpssPercentile: numeric({ mode: "number" }),

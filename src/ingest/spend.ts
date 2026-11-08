@@ -16,10 +16,26 @@ import { getPool, type Queryable } from "../db/client";
 import { getEnv } from "../env";
 import type { AdapterContext, FetchResult, Source, SourceAdapter } from "./adapters/types";
 
-export const PROVIDERS = ["x"] as const;
+export const PROVIDERS = ["x", "anthropic"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
-export const PROVIDER_LABELS: Record<Provider, string> = { x: "X API" };
+export const PROVIDER_LABELS: Record<Provider, string> = { x: "X API", anthropic: "AI summaries" };
+
+/** USD per million tokens, from the Claude API pricing table (cached 2026-10-06; prompts ≤ 100K tokens). */
+export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-opus-5-5": { input: 4, output: 20 },
+};
+
+/** Price for the configured summary model; env overrides win. Null when unknown (the cap can't be enforced). */
+export function modelPrice(model: string): { input: number; output: number } | null {
+  const env = getEnv();
+  const base = MODEL_PRICES[model];
+  const input = env.AI_INPUT_USD_PER_MTOK ?? base?.input;
+  const output = env.AI_OUTPUT_USD_PER_MTOK ?? base?.output;
+  return input === undefined || output === undefined ? null : { input, output };
+}
 
 export type Usage = { usd: number; requests: number; units: number };
 export const NO_USAGE: Usage = { usd: 0, requests: 0, units: 0 };
@@ -43,6 +59,14 @@ export function providerStatus(provider: Provider): ProviderStatus {
           ? "X_BEARER_TOKEN is not set"
           : null;
       return { provider, label: PROVIDER_LABELS.x, enabled: !disabledReason, disabledReason, capUsd: env.X_MONTHLY_CAP_USD };
+    }
+    case "anthropic": {
+      const disabledReason = !env.ANTHROPIC_API_KEY
+        ? "ANTHROPIC_API_KEY is not set"
+        : !modelPrice(env.SUMMARY_MODEL)
+          ? `no price known for ${env.SUMMARY_MODEL}: set AI_INPUT_USD_PER_MTOK and AI_OUTPUT_USD_PER_MTOK`
+          : null;
+      return { provider, label: PROVIDER_LABELS.anthropic, enabled: !disabledReason, disabledReason, capUsd: env.AI_MONTHLY_CAP_USD };
     }
   }
 }

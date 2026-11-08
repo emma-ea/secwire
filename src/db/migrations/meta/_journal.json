@@ -43,6 +43,13 @@
       "when": 1794173550559,
       "tag": "0005_phase3_x_spend",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794173996733,
+      "tag": "0006_phase3_story_summaries",
+      "breakpoints": true
     }
   ]
 }

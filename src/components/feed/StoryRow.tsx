@@ -22,6 +22,11 @@ export function StoryRow({ s }: { s: StoryListRow }) {
         <CvssBadge score={s.max_cvss} />
         <EpssBadge percentile={s.max_epss_percentile} score={s.max_epss} />
       </div>
+      {s.summary && (
+        <p className="mt-0.5 line-clamp-1 max-w-4xl text-xs text-foreground/75" title={s.summary}>
+          {s.summary}
+        </p>
+      )}
       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted">
         {s.cve_ids.length > 0 && (
           <span className="flex flex-wrap gap-x-1.5">

@@ -16,6 +16,7 @@ export const QUEUES = {
   enrichCve: "enrich.cve",
   enrichRefresh: "enrich.refresh",
   cluster: "cluster.items",
+  summarize: "summarize.story",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -46,6 +47,8 @@ export const QUEUE_DEFINITIONS: Record<QueueName, Omit<Queue, "name">> = {
   // jobs use RECLUSTER_SINGLETON_KEY so a queued pipeline job can't swallow
   // them. Both serialize on the story advisory lock.
   [QUEUES.cluster]: { policy: "stately", retryLimit: 3, retryDelay: 15, retryBackoff: true, expireInSeconds: 1800 },
+  // Phase 3: one queued job per story (singletonKey = story id); paid, so few retries.
+  [QUEUES.summarize]: { policy: "stately", retryLimit: 2, retryDelay: 60, retryBackoff: true, expireInSeconds: 300 },
 };
 
 export const RECLUSTER_SINGLETON_KEY = "recluster";
@@ -62,6 +65,7 @@ export type EnrichCveJob = { cveId: string; runId?: string; epss?: boolean };
 export type EnrichRefreshJob = { runId?: string };
 /** `since` (ISO) makes it a recluster. */
 export type ClusterJob = { runId?: string; since?: string };
+export type SummarizeStoryJob = { storyId: string };
 
 function attachErrorLogger(boss: PgBoss, label: string): PgBoss {
   boss.on("error", (err) => console.error(`[pg-boss:${label}] error:`, err));

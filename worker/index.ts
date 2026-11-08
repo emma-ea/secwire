@@ -16,6 +16,7 @@ import {
   type EnrichCveJob,
   type EnrichRefreshJob,
   type IngestSourceJob,
+  type SummarizeStoryJob,
 } from "../src/ingest/boss";
 import { nvdSpacingMs } from "../src/ingest/enrich/throttle";
 import {
@@ -25,10 +26,12 @@ import {
   handlePrune,
   handleSchedulerSync,
   handleSourceJob,
+  handleSummarizeJob,
   handleTick,
 } from "../src/ingest/handlers";
 import { enqueueClusterIfPending } from "../src/ingest/hooks";
 import { reconcileStaleJobRuns, reconcileStaleRunSources } from "../src/ingest/runs";
+import { PROVIDERS, providerStatus } from "../src/ingest/spend";
 import {
   HEARTBEAT_INTERVAL_MS,
   pruneHeartbeats,
@@ -115,12 +118,21 @@ async function main() {
 
   await boss.work<ClusterJob>(QUEUES.cluster, { localConcurrency: 1 }, async ([job]: Job<ClusterJob>[]) => {
     if (!job) return;
-    const r = await handleClusterJob(job);
+    const r = await handleClusterJob(job, { boss });
     if (r.processed > 0 || job.data.since) {
       log(
         `${job.data.since ? `recluster since ${job.data.since}` : "cluster"} → ${r.processed} item(s): ${r.joinedByUrl} by URL, ${r.joinedByCve} by CVE, ${r.created} new stor${r.created === 1 ? "y" : "ies"}`,
       );
     }
+  });
+
+  // Paid: one at a time (the spend lock serializes them anyway).
+  await boss.work<SummarizeStoryJob>(QUEUES.summarize, { localConcurrency: 1 }, async ([job]: Job<SummarizeStoryJob>[]) => {
+    if (!job) return;
+    const r = await handleSummarizeJob(job);
+    if (r.status === "summarized") log(`summarize ${job.data.storyId}: ${r.itemCount} items, $${r.usd.toFixed(5)}`);
+    else if (r.status === "no_summary") log(`summarize ${job.data.storyId}: no summary (${r.reason})`);
+    else if (r.reason.includes("cap") || r.reason.startsWith("API error")) log(`summarize ${job.data.storyId}: skipped (${r.reason})`);
   });
 
   await boss.work(QUEUES.prune, { localConcurrency: 1 }, async () => {
@@ -146,6 +158,10 @@ async function main() {
   };
   await beat();
   const timer = setInterval(() => void beat(), HEARTBEAT_INTERVAL_MS);
+  for (const p of PROVIDERS) {
+    const st = providerStatus(p);
+    log(`${st.label}: ${st.enabled ? `on, monthly cap $${st.capUsd}` : `off (${st.disabledReason})`}`);
+  }
   log(
     `heartbeat every ${HEARTBEAT_INTERVAL_MS / 1000}s; source concurrency ${SOURCE_CONCURRENCY}; NVD spacing ${nvdSpacingMs(Boolean(env.NVD_API_KEY)) / 1000}s (${env.NVD_API_KEY ? "with" : "no"} API key)`,
   );
