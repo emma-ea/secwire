@@ -9,7 +9,7 @@ import { getDb, type Db } from "../db/client";
 import { ingestionRunSources, ingestionRuns, sources } from "../db/schema";
 import { getAdapter, type NormalizedItem } from "./adapters";
 import { getSenderBoss, QUEUES, type IngestSourceJob } from "./boss";
-import { runSource } from "./run-source";
+import { runSource, type RunSourceOptions } from "./run-source";
 import { finalizeRun, recordRunSourceResult, type RunSourceStatus } from "./runs";
 import { testSource } from "./test-source";
 
@@ -30,8 +30,9 @@ export type TriggerInput = {
   dryRun?: boolean;
   /** Backfill window (HN only). */
   range?: { since: Date; until?: Date };
-  /** Test seam. */
+  /** Test seams. */
   boss?: PgBoss;
+  fetcher?: RunSourceOptions["fetcher"];
 };
 
 export type TriggerSourceStatus = RunSourceStatus | "dry_run";
@@ -136,7 +137,7 @@ export async function triggerIngestion(input: TriggerInput): Promise<TriggerResu
 
   if (input.inline) {
     for (const { source } of runnable) {
-      const o = await runSource(source.id, { runId, force, isFinalAttempt: true, range: input.range });
+      const o = await runSource(source.id, { runId, force, isFinalAttempt: true, range: input.range, fetcher: input.fetcher });
       results.push({ sourceId: source.id, status: o.status, error: o.error, itemsNew: o.itemsNew });
     }
   } else if (runnable.length) {

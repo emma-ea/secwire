@@ -20,6 +20,8 @@
     "recluster": "echo 'recluster is implemented in Phase 2' && exit 1",
     "backfill:hn": "tsx --env-file-if-exists=.env scripts/backfill-hn.ts",
     "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit"
   },

@@ -7,7 +7,7 @@ import type { Job, PgBoss } from "pg-boss";
 import { getDb } from "../db/client";
 import { appSettings, ingestionRuns, loginAttempts, sources, workerHeartbeats } from "../db/schema";
 import { QUEUE_DEFINITIONS, QUEUES, type IngestSourceJob } from "./boss";
-import { runSource } from "./run-source";
+import { runSource, type RunSourceOptions } from "./run-source";
 import { reconcileStaleRunSources, recordRunSourceResult } from "./runs";
 import { findDueSources, getSettings, syncSchedules } from "./scheduler-service";
 import { triggerIngestion } from "./trigger";
@@ -39,7 +39,10 @@ export class RetryableSourceError extends Error {
 }
 
 /** ingest.source: one source, one run. Throwing makes pg-boss retry (2×, backoff). */
-export async function handleSourceJob(job: Pick<Job<IngestSourceJob>, "data" | "retryCount" | "signal">): Promise<void> {
+export async function handleSourceJob(
+  job: Pick<Job<IngestSourceJob>, "data" | "retryCount" | "signal">,
+  deps: { fetcher?: RunSourceOptions["fetcher"] } = {},
+): Promise<void> {
   const { runId, sourceId, force } = job.data;
   const retryLimit = QUEUE_DEFINITIONS[QUEUES.source].retryLimit ?? 0;
   const isFinalAttempt = job.retryCount >= retryLimit;
@@ -50,6 +53,7 @@ export async function handleSourceJob(job: Pick<Job<IngestSourceJob>, "data" | "
       attempt: job.retryCount + 1,
       isFinalAttempt,
       signal: job.signal,
+      fetcher: deps.fetcher,
     });
     if (o.status === "failed" && o.retryable) throw new RetryableSourceError(o.error ?? "failed");
   } catch (err) {
