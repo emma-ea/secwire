@@ -22,6 +22,14 @@ import {
 } from "@/ingest/sources-service";
 import { testSource, type TestSourceResult } from "@/ingest/test-source";
 import { triggerIngestion, UnknownSourcesError, type TriggerSourceResult } from "@/ingest/trigger";
+import {
+  InvalidCveIdError,
+  InvalidSinceError,
+  parseSince,
+  triggerEnrichCve,
+  triggerRecluster,
+  type JobTriggerResult,
+} from "@/ingest/trigger-jobs";
 
 type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -69,6 +77,30 @@ export async function cancelRunAction(runId: string): Promise<ActionResult<{ can
   if (!z.uuid().safeParse(runId).success) return { ok: false, error: "Invalid run id" };
   const r = await cancelRun(runId);
   return r ? { ok: true, data: { cancelled: r.cancelled, stillRunning: r.stillRunning } } : { ok: false, error: "Run not found" };
+}
+
+// --- Enrichment & clustering -------------------------------------------------
+
+export async function reEnrichCveAction(cveId: string): Promise<ActionResult<Pick<JobTriggerResult, "runId" | "status" | "error">>> {
+  await requireAdmin();
+  try {
+    const r = await triggerEnrichCve({ trigger: "admin", triggeredBy: "admin", cveId: String(cveId) });
+    return { ok: true, data: { runId: r.runId, status: r.status, error: r.error ?? null } };
+  } catch (err) {
+    if (err instanceof InvalidCveIdError) return { ok: false, error: err.message };
+    throw err;
+  }
+}
+
+export async function reclusterAction(since: string): Promise<ActionResult<Pick<JobTriggerResult, "runId" | "status" | "error">>> {
+  await requireAdmin();
+  try {
+    const r = await triggerRecluster({ trigger: "admin", triggeredBy: "admin", since: parseSince(String(since)) });
+    return { ok: true, data: { runId: r.runId, status: r.status, error: r.error ?? null } };
+  } catch (err) {
+    if (err instanceof InvalidSinceError) return { ok: false, error: err.message };
+    throw err;
+  }
 }
 
 // --- Sources ---------------------------------------------------------------

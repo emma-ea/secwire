@@ -7,6 +7,7 @@ import { runIngestAction } from "@/app/admin/actions";
 import type { DashboardStatus } from "@/ingest/dashboard";
 import type { SchedulerState } from "@/ingest/scheduler-service";
 import { btn, btnPrimary, Panel } from "../ui";
+import { ClusterPanel } from "./ClusterPanel";
 import { RunsTable } from "./RunsTable";
 import { SchedulerPanel } from "./SchedulerPanel";
 import { SourcesTable } from "./SourcesTable";
@@ -86,6 +87,7 @@ export function Dashboard({ initialStatus, scheduler }: { initialStatus: Dashboa
             changed();
           }}
         />
+        <div className="space-y-4">
         <Panel title="Queues">
           {status.queues === null ? (
             <p className="text-xs text-muted">pg-boss unavailable (has the worker ever started?)</p>
@@ -112,6 +114,8 @@ export function Dashboard({ initialStatus, scheduler }: { initialStatus: Dashboa
             </table>
           )}
         </Panel>
+        <ClusterPanel backlog={status.backlog} onDone={changed} />
+        </div>
       </div>
 
       <Panel

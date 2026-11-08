@@ -15,7 +15,7 @@ export type RunDetailData = {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
-  stats: { sources?: number; itemsSeen?: number; itemsNew?: number; itemsUpdated?: number };
+  stats: { sources?: number; itemsSeen?: number; itemsNew?: number; itemsUpdated?: number } & Record<string, unknown>;
   error: string | null;
   sources: Array<{
     sourceId: string;
@@ -36,6 +36,8 @@ export function RunDetail({ initial }: { initial: RunDetailData }) {
   const [run, setRun] = useState(initial);
   const [pending, startTransition] = useTransition();
   const active = run.status === "queued" || run.status === "running";
+  // Enrich and recluster runs are one job with no per-source rows.
+  const isJobRun = run.kind === "enrich" || run.kind === "recluster";
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/admin/runs/${run.id}`, { cache: "no-store" });
@@ -56,7 +58,7 @@ export function RunDetail({ initial }: { initial: RunDetailData }) {
         </span>
       }
       actions={
-        active ? (
+        active && !isJobRun ? (
           <button
             type="button"
             className={btn}
@@ -89,12 +91,32 @@ export function RunDetail({ initial }: { initial: RunDetailData }) {
         <dd>
           <LocalTime iso={run.finishedAt} mode="datetime" fallback="—" />
         </dd>
-        <dt className="text-muted">Items</dt>
-        <dd className="font-mono">
-          {run.stats.itemsSeen ?? 0} seen · {run.stats.itemsNew ?? 0} new · {run.stats.itemsUpdated ?? 0} updated
-        </dd>
+        {isJobRun ? (
+          <>
+            {Object.entries(run.stats).map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted">{k}</dt>
+                <dd className="font-mono">{v === null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
+              </div>
+            ))}
+            {run.error && (
+              <>
+                <dt className="text-muted">Error</dt>
+                <dd className="whitespace-pre-wrap text-red-700 dark:text-red-300">{run.error}</dd>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <dt className="text-muted">Items</dt>
+            <dd className="font-mono">
+              {run.stats.itemsSeen ?? 0} seen · {run.stats.itemsNew ?? 0} new · {run.stats.itemsUpdated ?? 0} updated
+            </dd>
+          </>
+        )}
       </dl>
 
+      {!isJobRun && (
       <div className="overflow-x-auto">
         <table className="data-table">
           <thead>
@@ -133,6 +155,7 @@ export function RunDetail({ initial }: { initial: RunDetailData }) {
           </tbody>
         </table>
       </div>
+      )}
     </Panel>
   );
 }

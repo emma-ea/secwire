@@ -126,7 +126,7 @@ export function SchedulerPanel({ initial, workerOnline, sources, onSaved }: Prop
           <span className="text-muted">Daily NVD/EPSS refresh</span>
           <span className="flex items-center gap-2">
             <input type="checkbox" checked={enrichRefresh} onChange={(e) => edit(() => setEnrichRefresh(e.target.checked))} />
-            {enrichRefresh ? "On" : "Off"} <span className="text-muted">(takes effect in Phase 2)</span>
+            {enrichRefresh ? "On" : "Off"} <span className="text-muted">(daily at 03:00 UTC)</span>
           </span>
         </label>
 

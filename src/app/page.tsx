@@ -1,78 +1,78 @@
-import { desc, eq, sql } from "drizzle-orm";
-import { LocalTime } from "@/components/LocalTime";
-import { Badge, ExternalLink } from "@/components/ui";
-import { getDb } from "@/db/client";
-import { cves, itemCves, items, sources } from "@/db/schema";
+import Link from "next/link";
+import { FilterBar } from "@/components/feed/FilterBar";
+import { StoryRow } from "@/components/feed/StoryRow";
+import { feedHref, hasActiveFilters, parseFeedParams, searchAsCveId, SORTS } from "@/feed/params";
+import { getFilterOptions, listStories } from "@/feed/queries";
 
 /**
- * Phase 1: a temporary list of recent *items* (not yet clustered into stories).
- * Phase 2 replaces this with the story feed. All feed text renders as plain
- * text — never dangerouslySetInnerHTML.
+ * Story feed (SPEC §8). Server component reading Postgres directly; filters,
+ * sort and the keyset cursor all come from the URL.
  */
-const LIMIT = 150;
-
-export default async function Home() {
-  const db = getDb();
-  const rows = await db
-    .select({
-      id: items.id,
-      title: items.title,
-      url: items.url,
-      excerpt: items.excerpt,
-      publishedAt: items.publishedAt,
-      fetchedAt: items.fetchedAt,
-      sourceName: sources.name,
-      category: sources.category,
-      cveIds: sql<string[]>`coalesce(array_agg(${itemCves.cveId} ORDER BY ${itemCves.cveId}) FILTER (WHERE ${itemCves.cveId} IS NOT NULL), '{}')`,
-      inKev: sql<boolean>`coalesce(bool_or(${cves.inKev}), false)`,
-    })
-    .from(items)
-    .innerJoin(sources, eq(sources.id, items.sourceId))
-    .leftJoin(itemCves, eq(itemCves.itemId, items.id))
-    .leftJoin(cves, eq(cves.id, itemCves.cveId))
-    .groupBy(items.id, sources.name, sources.category)
-    .orderBy(desc(sql`coalesce(${items.publishedAt}, ${items.fetchedAt})`), desc(items.id))
-    .limit(LIMIT);
+export default async function Home({ searchParams }: PageProps<"/">) {
+  const filters = parseFeedParams(await searchParams);
+  const [{ stories, nextCursor }, options] = await Promise.all([listStories(filters), getFilterOptions()]);
+  const active = hasActiveFilters(filters);
+  const cveSearch = searchAsCveId(filters.q);
 
   return (
     <main>
-      <div className="mb-3 flex items-baseline gap-3">
-        <h1 className="text-base font-semibold">Latest items</h1>
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-2">
+        <h1 className="text-base font-semibold">Stories</h1>
         <span className="text-xs text-muted">
-          {rows.length} most recent · unclustered preview (stories arrive in Phase 2)
+          {SORTS[filters.sort].toLowerCase()} · last {filters.range}
+          {filters.cursor ? " · continued" : ""}
         </span>
       </div>
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted">
-          Nothing ingested yet. Run <code className="font-mono">pnpm db:seed</code> then{" "}
-          <code className="font-mono">pnpm ingest --all --wait</code>.
+      <div className="mb-3">
+        <FilterBar filters={filters} options={options} active={active} />
+      </div>
+
+      {cveSearch && (
+        <p className="mb-2 text-xs text-muted">
+          Showing stories that mention {cveSearch}.{" "}
+          <Link href={`/cve/${cveSearch}`} className="text-accent hover:underline">
+            CVE details →
+          </Link>
+        </p>
+      )}
+
+      {stories.length === 0 ? (
+        <p className="py-8 text-sm text-muted">
+          {active || filters.cursor ? (
+            <>
+              No stories match.{" "}
+              <Link href="/" className="text-accent hover:underline">
+                Clear filters
+              </Link>
+            </>
+          ) : (
+            <>
+              Nothing yet. Run <code className="font-mono">pnpm db:seed</code> and{" "}
+              <code className="font-mono">pnpm ingest --all --wait</code> with the worker running.
+            </>
+          )}
         </p>
       ) : (
         <ol className="divide-y divide-foreground/5">
-          {rows.map((r) => (
-            <li key={r.id} className="py-2">
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <ExternalLink href={r.url} className="font-medium hover:underline">
-                  {r.title}
-                </ExternalLink>
-                {r.inKev && <Badge tone="bad">KEV</Badge>}
-                {r.cveIds.map((c) => (
-                  <span key={c} className="font-mono text-[11px] text-accent">
-                    {c}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted">
-                <span>{r.sourceName}</span>
-                <span>·</span>
-                <span>{r.category}</span>
-                <span>·</span>
-                <LocalTime iso={(r.publishedAt ?? r.fetchedAt).toISOString()} />
-              </div>
-              {r.excerpt && <p className="mt-1 line-clamp-2 max-w-4xl text-xs text-foreground/75">{r.excerpt}</p>}
-            </li>
+          {stories.map((s) => (
+            <StoryRow key={s.id} s={s} />
           ))}
         </ol>
+      )}
+
+      {(nextCursor || filters.cursor) && (
+        <nav className="mt-4 flex gap-4 text-xs" aria-label="Pagination">
+          {filters.cursor && (
+            <Link href={feedHref(filters)} className="text-accent hover:underline">
+              ← First page
+            </Link>
+          )}
+          {nextCursor && (
+            <Link href={feedHref(filters, { cursor: nextCursor })} className="text-accent hover:underline">
+              Next page →
+            </Link>
+          )}
+        </nav>
       )}
     </main>
   );
