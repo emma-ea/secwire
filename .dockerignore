@@ -1,0 +1,11 @@
+.git
+.next
+node_modules
+.env
+.env.*
+!.env.example
+tests
+coverage
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store

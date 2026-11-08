@@ -1,5 +1,18 @@
-# Phase 0: database only. The web, worker and one-off migrate services
-# (same image, different commands) are added in Phase 1 — see DECISIONS.md.
+# Local development: `docker compose up -d db` and run web/worker with pnpm.
+# Full stack in containers: `docker compose --profile app up --build`
+# (reads secrets from .env; DATABASE_URL is overridden to reach the db service).
+
+x-app: &app
+  build: .
+  image: secwire:local
+  profiles: ["app"]
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgres://secwire:secwire@db:5432/secwire
+    NODE_ENV: production
+
 services:
   db:
     image: postgres:17
@@ -17,6 +30,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # One-off: applies Drizzle migrations, then exits. The secwire DB user owns
+  # the database, so the worker can also create the pg-boss schema.
+  migrate:
+    <<: *app
+    command: ["pnpm", "db:migrate"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    command: ["pnpm", "start"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["pnpm", "start:worker"]
+    restart: unless-stopped
+    stop_grace_period: 40s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
