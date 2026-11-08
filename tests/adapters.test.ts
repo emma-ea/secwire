@@ -6,6 +6,8 @@ import {
   hackerNewsAdapter,
   hnConfig,
   hnSince,
+  normalizeHnQuery,
+  titleMatchesQuery,
   parseHnHits,
 } from "@/ingest/adapters/hackernews";
 import { parseFeed, rssAdapter } from "@/ingest/adapters/rss";
@@ -243,14 +245,42 @@ describe("Hacker News adapter", () => {
     expect(hnConfig(hnSource)).toEqual({ queries: HN_DEFAULT_QUERIES, minPoints: 20 });
     expect(hnConfig({ config: { queries: ["CVE"], minPoints: 50 } })).toEqual({ queries: ["CVE"], minPoints: 50 });
     expect(hnConfig({ config: { queries: "oops" } })).toEqual({ queries: HN_DEFAULT_QUERIES, minPoints: 20 });
-    expect(hackerNewsAdapter.requestsPerFetch(hnSource)).toBe(7);
+    expect(hackerNewsAdapter.requestsPerFetch(hnSource)).toBe(8);
   });
 
-  it("builds the Algolia query", () => {
+  it("builds a strict Algolia query (no typos, no prefixes, title only)", () => {
     const u = new URL(buildSearchUrl(hnSource.url, "zero-day", 1_700_000_000, 20));
-    expect(u.searchParams.get("query")).toBe("zero-day");
+    expect(u.searchParams.get("query")).toBe("zero day");
     expect(u.searchParams.get("tags")).toBe("story");
     expect(u.searchParams.get("numericFilters")).toBe("created_at_i>1700000000,points>=20");
+    expect(u.searchParams.get("typoTolerance")).toBe("false");
+    expect(u.searchParams.get("restrictSearchableAttributes")).toBe("title");
+    expect(u.searchParams.get("queryType")).toBe("prefixNone");
+    expect(u.searchParams.get("ignorePlurals")).toBe("true");
+  });
+
+  it("normalizes hyphenated queries", () => {
+    expect(normalizeHnQuery("zero-day")).toBe("zero day");
+    expect(normalizeHnQuery("  zero\u2011day  ")).toBe("zero day");
+    expect(normalizeHnQuery("0day")).toBe("0day");
+  });
+
+  it.each([
+    ["Apple CEO Presses Software Chief to Pursue More Ambitious AI Strategy", "CVE", false],
+    ["TCP Use-After-Free: CVE-2026-98432", "CVE", true],
+    ["Show HN: an open-source tool", "RCE", false],
+    ["Brotli decoder RCE in Node.js", "RCE", true],
+    ["Three critical vulnerabilities in OpenSSH", "vulnerability", true],
+    ["Chrome zero-day exploited in the wild", "zero-day", true],
+    ["Chrome Zero Day exploited", "zero day", true],
+    ["Zero to Calc in Six Days", "zero day", false],
+    ["Exploiting the exploit market", "exploit", true],
+    ["Exploitation techniques", "exploit", false],
+    ["Gitbook Breached", "breach", false],
+    ["WorkOS reports security breach", "breach", true],
+    ["", "CVE", false],
+  ])("title %j matches %j → %s", (title, query, expected) => {
+    expect(titleMatchesQuery(title, query)).toBe(expected);
   });
 
   it("looks back at least 24h, further if the last success was older", () => {
@@ -260,13 +290,20 @@ describe("Hacker News adapter", () => {
     expect(hnSince(new Date(NOW.getTime() - 72 * 3600_000), NOW)).toBe(nowS - 73 * 3600);
   });
 
-  it("issues one request per query and dedupes across queries", async () => {
+  it("issues one request per query, drops off-topic titles and dedupes across queries", async () => {
+    // The fixture was captured with Algolia's default (fuzzy) settings, so it
+    // contains noise such as "AI is forcing us to pay off 40 years of technical debt".
     const f = fakeFetcher(() => ({ body: fixture("hn-search.json") }));
     const res = await hackerNewsAdapter.fetch(hnSource, ctx({ fetcher: f }));
     expect(f.calls).toHaveLength(HN_DEFAULT_QUERIES.length);
     expect(res.status).toBe("ok");
     if (res.status === "ok") {
-      expect(res.items.length).toBe(parseHnHits(response.hits, 20).length);
+      const titles = res.items.map((i) => i.title).sort();
+      expect(titles).toEqual([
+        "MS Paint Remote Code Execution Vulnerability",
+        "OpenSSH 10.6p2 has been released with a workaround for a critical vulnerability",
+      ]);
+      expect(parseHnHits(response.hits, 20).length).toBeGreaterThan(titles.length);
     }
   });
 

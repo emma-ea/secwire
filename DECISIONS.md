@@ -243,6 +243,25 @@ the spec, or where something was deliberately deferred. Newest phase at the bott
   `${WEB_PORT:-3000}`. Secrets come from `.env`, and `DATABASE_URL` is overridden
   to reach the `db` service.
 
+## Phase 2 — Enrichment, clustering, real UI
+
+### Hacker News relevance
+- **Strict Algolia search.** With Algolia's default settings, about 48 of 49 ingested
+  HN stories were off-topic. Typo tolerance turned "CVE" into "CEO", and prefix
+  and URL matching found "RCE" inside "source". Every request now sends
+  `typoTolerance=false`, `restrictSearchableAttributes=title`,
+  `queryType=prefixNone`, `ignorePlurals=true` and `advancedSyntax=false`.
+- **Local title check as well** (`titleMatchesQuery`): a hit is kept only when its
+  title contains the query's words as consecutive whole words (plurals allowed).
+  This guards against Algolia changing its defaults, and drops "Zero to Calc in Six
+  Days" for the query "zero day".
+- **Hyphens become spaces** in queries (`zero-day` → `zero day`), since Algolia
+  found nothing for the hyphenated form. `0day` is a new default query, so HN
+  costs 8 requests per fetch. The dev database's `hackernews` config was updated,
+  and its 48 off-topic items were deleted with the owner's approval. Known gap:
+  inflected forms such as "Breached" don't match `breach`. Admins can add terms to
+  `config.queries`.
+
 ### SPEC §7.4 scenario coverage
 Automated tests are in `tests/integration/*` (they need `docker compose up -d db`)
 and `tests/*.test.ts`. Manual checks were run on 2026-11-08 against the dev stack.

@@ -5,7 +5,7 @@ import { parseHttpUrl } from "../../lib/url";
 import { assertOk, getFrom } from "./http";
 import { SourceParseError, type FetchResult, type NormalizedItem, type Source, type SourceAdapter } from "./types";
 
-export const HN_DEFAULT_QUERIES = ["CVE", "vulnerability", "zero-day", "exploit", "ransomware", "breach", "RCE"];
+export const HN_DEFAULT_QUERIES = ["CVE", "vulnerability", "zero-day", "0day", "exploit", "ransomware", "breach", "RCE"];
 export const HN_DEFAULT_MIN_POINTS = 20;
 
 const HOUR_S = 3600;
@@ -52,8 +52,61 @@ export function hnDiscussionUrl(objectID: string): string {
   return `https://news.ycombinator.com/item?id=${encodeURIComponent(objectID)}`;
 }
 
-/** Converts Algolia hits to items: requires an http(s) URL and enough points. */
-export function parseHnHits(hits: unknown[], minPoints: number, now = new Date()): NormalizedItem[] {
+/**
+ * Algolia's defaults are tuned for discovery, not precision: typo tolerance
+ * turns "CVE" into "CEO", prefix matching and URL/author attributes match
+ * "RCE" inside "source". These make a query match whole title words only
+ * (plurals allowed). See DECISIONS.md.
+ */
+export const HN_STRICT_SEARCH_PARAMS: Readonly<Record<string, string>> = {
+  typoTolerance: "false",
+  restrictSearchableAttributes: "title",
+  queryType: "prefixNone",
+  ignorePlurals: "true",
+  advancedSyntax: "false",
+};
+
+/** Hyphens are word separators for Algolia ("zero-day" → "zero day"). */
+export function normalizeHnQuery(query: string): string {
+  return query
+    .replace(/[-\u2010-\u2015_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokens(text: string): string[] {
+  return text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+}
+
+function wordMatches(word: string, term: string): boolean {
+  if (word === term) return true;
+  if (word === `${term}s` || word === `${term}es`) return true;
+  return term.endsWith("y") && word === `${term.slice(0, -1)}ies`;
+}
+
+/**
+ * Local relevance check, defence in depth over the Algolia params: the query's
+ * words must appear in the title as consecutive whole words (plurals allowed).
+ * "zero day" matches "Chrome zero-day exploited" but not "Zero to Calc in Six Days".
+ */
+export function titleMatchesQuery(title: string, query: string): boolean {
+  const q = tokens(normalizeHnQuery(query));
+  if (!q.length) return false;
+  const t = tokens(title);
+  outer: for (let i = 0; i + q.length <= t.length; i++) {
+    for (let j = 0; j < q.length; j++) {
+      if (!wordMatches(t[i + j]!, q[j]!)) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Converts Algolia hits to items: requires an http(s) URL and enough points,
+ * and — when `query` is given — a title that actually contains the query.
+ */
+export function parseHnHits(hits: unknown[], minPoints: number, now = new Date(), query?: string): NormalizedItem[] {
   const out: NormalizedItem[] = [];
   for (const raw of hits) {
     const r = hit.safeParse(raw);
@@ -64,6 +117,7 @@ export function parseHnHits(hits: unknown[], minPoints: number, now = new Date()
     if (!url || points < minPoints) continue;
     const title = toTitle(h.title);
     if (!title) continue;
+    if (query !== undefined && !titleMatchesQuery(title, query)) continue;
     out.push({
       externalId: h.objectID,
       url: url.href,
@@ -94,8 +148,9 @@ export function buildSearchUrl(
   const filters = [`created_at_i>${sinceS}`];
   if (opts.untilS) filters.push(`created_at_i<${opts.untilS}`);
   if (minPoints > 0) filters.push(`points>=${minPoints}`);
-  u.searchParams.set("query", query);
+  u.searchParams.set("query", normalizeHnQuery(query));
   u.searchParams.set("tags", "story");
+  for (const [k, v] of Object.entries(HN_STRICT_SEARCH_PARAMS)) u.searchParams.set(k, v);
   u.searchParams.set("numericFilters", filters.join(","));
   u.searchParams.set("hitsPerPage", String(HITS_PER_PAGE));
   if (opts.page) u.searchParams.set("page", String(opts.page));
@@ -138,7 +193,7 @@ export const hackerNewsAdapter: SourceAdapter = {
         } catch {
           throw new SourceParseError("HN search: unexpected response");
         }
-        for (const item of parseHnHits(body.hits, minPoints, now)) byId.set(item.externalId, item);
+        for (const item of parseHnHits(body.hits, minPoints, now, q)) byId.set(item.externalId, item);
         if (body.nbPages === undefined || page + 1 >= body.nbPages) break;
       }
     }
