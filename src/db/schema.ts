@@ -49,6 +49,7 @@ export const sourceType = pgEnum("source_type", [
   "hackernews",
   "bluesky",
   "mastodon",
+  "x",
 ]);
 
 export const sourceCategory = pgEnum("source_category", [
@@ -94,6 +95,8 @@ export const runSourceStatus = pgEnum("run_source_status", [
   "skipped_disabled",
   "skipped_cooldown",
   "cancelled",
+  // Phase 3: a paid source (X) whose monthly spend cap would be exceeded.
+  "skipped_budget",
 ]);
 
 /** Statuses after which a run-source row never changes again. */
@@ -106,6 +109,7 @@ export const TERMINAL_RUN_SOURCE_STATUSES = [
   "skipped_disabled",
   "skipped_cooldown",
   "cancelled",
+  "skipped_budget",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -421,5 +425,28 @@ export const loginAttempts = pgTable(
   (t) => [
     index("login_attempts_ip_time_idx").on(t.ip, t.attemptedAt.desc()),
     index("login_attempts_time_idx").on(t.attemptedAt.desc()),
+  ],
+);
+
+/**
+ * Paid API spend per provider per calendar month (UTC), Phase 3. Written in the
+ * same place the request is made (X fetches, AI summaries) and checked against
+ * the provider's monthly cap before every paid call. See src/ingest/spend.ts.
+ */
+export const apiSpend = pgTable(
+  "api_spend",
+  {
+    provider: text().notNull(),
+    /** "YYYY-MM" in UTC. */
+    month: text().notNull(),
+    usd: numeric({ precision: 12, scale: 6, mode: "number" }).notNull().default(0),
+    requests: integer().notNull().default(0),
+    /** Billable units: posts read (X), tokens (AI). */
+    units: integer().notNull().default(0),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.provider, t.month] }),
+    check("api_spend_month_format", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
   ],
 );

@@ -4,9 +4,11 @@ import { z } from "zod";
 import { getDb } from "../db/client";
 import { sourceCategory, sources, sourceType } from "../db/schema";
 import { parseHttpUrl } from "../lib/url";
+import { getAdapter } from "./adapters";
 import { activeSourceIds } from "./runs";
 
 export const UNHEALTHY_AFTER_FAILURES = 5;
+export const PAID_SOURCE_DEFAULT_MIN_INTERVAL = 60;
 
 export const sourcePatchSchema = z
   .object({
@@ -76,7 +78,8 @@ export async function createSource(input: NewSource) {
       type: input.type,
       category: input.category,
       url: input.url,
-      minIntervalMinutes: input.minIntervalMinutes ?? null,
+      // Paid sources default to hourly at most (SPEC §7.5); the admin can still lower it.
+      minIntervalMinutes: input.minIntervalMinutes ?? (getAdapter(input.type).paid ? PAID_SOURCE_DEFAULT_MIN_INTERVAL : null),
       config: input.config ?? {},
       enabled: true,
     })

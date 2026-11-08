@@ -7,15 +7,16 @@ import type { TestSourceResult } from "@/ingest/test-source";
 import { btn, btnPrimary, input } from "../ui";
 import { TestPreview } from "./TestPreview";
 
-const TYPES = ["rss", "hackernews", "cisa_kev", "bluesky", "mastodon"] as const;
+const TYPES = ["rss", "hackernews", "cisa_kev", "bluesky", "mastodon", "x"] as const;
 const URL_PLACEHOLDER: Record<(typeof TYPES)[number], string> = {
   rss: "https://example.com/feed.xml",
   hackernews: "https://hn.algolia.com/api/v1/search_by_date",
   cisa_kev: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
   bluesky: "https://bsky.app/profile/handle.example.com",
   mastodon: "https://infosec.exchange/@user",
+  x: "https://api.x.com/2/tweets/search/recent",
 };
-const SOCIAL = new Set<string>(["bluesky", "mastodon"]);
+const SOCIAL = new Set<string>(["bluesky", "mastodon", "x"]);
 const CATEGORIES = ["news", "research", "advisory", "community", "social"] as const;
 const HN_DEFAULT_QUERIES = "CVE, vulnerability, zero-day, exploit, ransomware, breach, RCE";
 
@@ -29,6 +30,7 @@ export function NewSourceForm() {
   const [override, setOverride] = useState("");
   const [hnQueries, setHnQueries] = useState(HN_DEFAULT_QUERIES);
   const [hnMinPoints, setHnMinPoints] = useState("20");
+  const [xAccounts, setXAccounts] = useState("");
   const [result, setResult] = useState<TestSourceResult | null>(null);
   const [testedKey, setTestedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,11 @@ export function NewSourceForm() {
           queries: hnQueries.split(",").map((q) => q.trim()).filter(Boolean),
           minPoints: Number(hnMinPoints) || 0,
         }
-      : {};
+      : type === "x"
+        ? { accounts: xAccounts.split(/[\s,]+/).map((a) => a.replace(/^@/, "")).filter(Boolean), filter: "relevant" }
+        : SOCIAL.has(type)
+          ? { filter: "relevant" }
+          : {};
   // Save requires a successful test of exactly what will be saved.
   const key = JSON.stringify({ type, url: url.trim(), config });
   const canSave = result?.ok === true && testedKey === key && id && name;
@@ -90,6 +96,7 @@ export function NewSourceForm() {
               const t = e.target.value as (typeof TYPES)[number];
               setType(t);
               if (SOCIAL.has(t)) setCategory("social");
+              if (t === "x") setUrl(URL_PLACEHOLDER.x);
             }}>
             {TYPES.map((t) => (
               <option key={t}>{t}</option>
@@ -105,7 +112,7 @@ export function NewSourceForm() {
           </select>
         </label>
         <label className={`${field} sm:col-span-2`}>
-          <span className="text-muted">{SOCIAL.has(type) ? "Profile URL" : "Feed / API URL"}</span>
+          <span className="text-muted">{type === "x" ? "API URL" : SOCIAL.has(type) ? "Profile URL" : "Feed / API URL"}</span>
           <input className={`${input} font-mono`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder={URL_PLACEHOLDER[type]} />
         </label>
         <label className={field}>
@@ -116,6 +123,17 @@ export function NewSourceForm() {
           <p className="text-xs text-muted sm:col-span-2">
             Only posts that mention a CVE, or link out and match a security keyword, are kept. Replies and reposts are skipped.
           </p>
+        )}
+        {type === "x" && (
+          <>
+            <label className={`${field} sm:col-span-2`}>
+              <span className="text-muted">Accounts (usernames, comma-separated)</span>
+              <input className={`${input} font-mono`} value={xAccounts} onChange={(e) => setXAccounts(e.target.value)} placeholder="account1, account2" />
+            </label>
+            <p className="text-xs text-muted sm:col-span-2">
+              Paid: X bills each post returned, and Test fetches count against the monthly cap. Runs hourly unless you set an override.
+            </p>
+          </>
         )}
         {type === "hackernews" && (
           <>

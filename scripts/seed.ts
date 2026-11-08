@@ -9,6 +9,7 @@ import { inArray } from "drizzle-orm";
 import { getDb } from "../src/db/client";
 import { sources } from "../src/db/schema";
 import { HN_DEFAULT_MIN_POINTS, HN_DEFAULT_QUERIES } from "../src/ingest/adapters/hackernews";
+import { X_SEARCH_URL } from "../src/ingest/adapters/x";
 import { testSource } from "../src/ingest/test-source";
 import { printTable, runCli } from "./lib/cli";
 
@@ -51,6 +52,17 @@ export const SEED_SOURCES: Seed[] = [
     ["masto-sans-isc", "SANS ISC (Mastodon)", "https://infosec.exchange/@sans_isc"],
     ["masto-watchtowr", "watchTowr (Mastodon)", "https://infosec.exchange/@watchTowr"],
   ]),
+  // X is paid and off unless X_ENABLED=true; with it off, verification fails
+  // and the source is inserted disabled with the reason in last_error.
+  {
+    id: "x-researchers",
+    name: "X researchers",
+    type: "x",
+    category: "social",
+    url: X_SEARCH_URL,
+    minIntervalMinutes: 60,
+    config: { accounts: ["campuscodi", "GossiTheDog", "wdormann", "briankrebs", "vxunderground"], maxResults: 20, filter: "relevant" },
+  },
 ];
 
 function social(type: "bluesky" | "mastodon", accounts: Array<[string, string, string]>): Seed[] {

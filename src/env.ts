@@ -32,6 +32,12 @@ export const envSchema = z
     KEV_ITEM_LOOKBACK_DAYS: positiveInt(14),
     CLUSTER_WINDOW_DAYS: positiveInt(14),
     WORKER_SCHEDULES_ENABLED: z.stringbool().default(true),
+    // Phase 3: X (paid, pay-per-use). Off unless explicitly enabled.
+    X_ENABLED: z.stringbool().default(false),
+    X_BEARER_TOKEN: optionalString,
+    X_MONTHLY_CAP_USD: z.coerce.number().min(0).default(10),
+    /** Price per post returned (docs.x.com pricing, checked 2026-11-08). */
+    X_POST_READ_USD: z.coerce.number().min(0).default(0.005),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== "production") return;
@@ -78,4 +84,9 @@ let cached: Env | undefined;
 export function getEnv(): Env {
   cached ??= parseEnv(process.env);
   return cached;
+}
+
+/** Tests only: re-read process.env on the next getEnv() call. */
+export function resetEnvCache(): void {
+  cached = undefined;
 }

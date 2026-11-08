@@ -1,0 +1,77 @@
+{
+ "data": [
+  {
+   "id": "1855000000000000001",
+   "text": "Ivanti zero-day exploited against VPN appliances https://t.co/aaa",
+   "created_at": "2026-11-08T10:00:00.000Z",
+   "edit_history_tweet_ids": [
+    "1855000000000000001"
+   ],
+   "entities": {
+    "urls": [
+     {
+      "start": 48,
+      "end": 71,
+      "url": "https://t.co/aaa",
+      "expanded_url": "https://news.example.com/2026/11/ivanti-zero-day",
+      "unwound_url": "https://news.example.com/2026/11/ivanti-zero-day",
+      "display_url": "news.example.com/2026/11/ivan\u2026",
+      "title": "Ivanti zero-day exploited",
+      "description": "Attackers are exploiting..."
+     }
+    ]
+   }
+  },
+  {
+   "id": "1855000000000000002",
+   "text": "Lunch was great today https://t.co/bbb",
+   "created_at": "2026-11-08T09:00:00.000Z",
+   "edit_history_tweet_ids": [
+    "1855000000000000002"
+   ],
+   "entities": {
+    "urls": [
+     {
+      "start": 21,
+      "end": 44,
+      "url": "https://t.co/bbb",
+      "expanded_url": "https://food.example.com/lunch",
+      "display_url": "food.example.com/lunch"
+     }
+    ]
+   }
+  },
+  {
+   "id": "1855000000000000003",
+   "text": "CVE-2026-12345 is being mass exploited, patch now",
+   "created_at": "2026-11-08T08:00:00.000Z",
+   "edit_history_tweet_ids": [
+    "1855000000000000003"
+   ]
+  },
+  {
+   "id": "1855000000000000004",
+   "text": "Look at this https://t.co/ccc",
+   "created_at": "2026-11-08T07:00:00.000Z",
+   "edit_history_tweet_ids": [
+    "1855000000000000004"
+   ],
+   "entities": {
+    "urls": [
+     {
+      "start": 13,
+      "end": 36,
+      "url": "https://t.co/ccc",
+      "expanded_url": "https://x.com/someone/status/1",
+      "display_url": "x.com/someone/status/1"
+     }
+    ]
+   }
+  }
+ ],
+ "meta": {
+  "newest_id": "1855000000000000001",
+  "oldest_id": "1855000000000000004",
+  "result_count": 4
+ }
+}

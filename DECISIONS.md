@@ -466,3 +466,31 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - Bluesky: Catalin Cimpanu, Zack Whittaker, Lorenzo Franceschi-Bicchierai, Dan Goodin, Kevin Beaumont.
   - Mastodon: Brian Krebs, Will Dormann, Kevin Beaumont, SANS ISC, watchTowr.
   - Accounts I rejected: `briankrebs.bsky.social` (a parody), `cyb3rops.bsky.social` (5 posts), and `@screaminggoat` (410 Gone).
+
+### X and spend caps (migration 0005)
+- **Pricing:** checked docs.x.com on 2026-11-08. X bills **$0.005 per post returned**. Repeat reads of the same post are deduplicated within one UTC day ("soft guarantee"), and user lookups are $0.010.
+- **One search per account.** The adapter calls `GET /2/tweets/search/recent` once per configured account, with `from:<account> -is:retweet -is:reply`.
+  - Requests are free; posts are what costs. So per-account requests cost nothing extra and tell us each post's author without a paid user lookup.
+  - With `filter: "relevant"`, the query also adds `(has:links OR CVE)`, so we don't pay for posts the local filter would drop anyway.
+  - Only the first page is read (`maxResults`, default 20, from 10 to 100), which bounds each fetch's cost. With the 10-minute overlap on `start_time`, a busy account could lose posts past the first page.
+- **`tweet.fields`, not `post.fields`.** The 2026 docs page lists `post.fields`, but every working example and third-party guide still uses `tweet.fields`. The parser tolerates missing fields either way.
+- **Token safety:**
+  - The source URL must be exactly `https://api.x.com/2/tweets/search/recent`, because admins can edit source URLs and the bearer token must never go anywhere else.
+  - `safeFetch` now drops `authorization`, `cookie`, `apikey` and `x-api-key` on cross-origin redirects. This also fixes a latent leak of the NVD `apiKey` header.
+- **Spend tracking.** `api_spend (provider, month)` holds USD, requests and billable units. `withBudget()` in `src/ingest/spend.ts`:
+  - takes a per-provider advisory lock;
+  - refuses the call when month-to-date spend plus the call's **worst case** (accounts × maxResults × price) would exceed the cap;
+  - records actual usage per request, even when the fetch fails part-way.
+  - Holding the lock across the call means two workers can't both pass the check. The cap can be undershot by up to one worst-case fetch, but never overshot.
+- **Skips are not failures.**
+  - With the flag off or no token, the run row says `skipped_disabled` with the reason.
+  - Over the cap, it says `skipped_budget`, a new `run_source_status`.
+  - Neither touches `consecutive_failures` or `last_fetched_at`.
+  - The tick leaves blocked paid sources out of its due list, so a capped source doesn't add a skipped run every 15 minutes until the next month. Manual triggers still record why they were skipped.
+- **Test costs too.** The admin "Test" for an X source goes through the same budget, because it spends real money.
+- **Defaults:**
+  - Paid sources get `min_interval_minutes = 60` unless the admin sets one.
+  - The cost estimate uses the worst-case cost per request (`costPerRequestUsd(source)`, now a function of the source's config).
+  - `X_ENABLED=false` and `X_MONTHLY_CAP_USD=10`.
+- **Seed.** `x-researchers` (5 accounts) is seeded through normal verification. With X off, verification fails and it lands disabled with the reason in `last_error`; nothing is ever fetched without the flag.
+- **Not verified live.** There is no X token here; everything is tested with fixtures.

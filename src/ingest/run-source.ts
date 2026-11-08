@@ -22,6 +22,7 @@ import {
   type Source,
 } from "./adapters";
 import { afterIngest } from "./hooks";
+import { BudgetError, fetchWithBudget } from "./spend";
 import { markRunSourceRunning, recordRetryableFailure, recordRunSourceResult, type RunSourceResult } from "./runs";
 
 export type RunSourceOptions = {
@@ -82,7 +83,7 @@ export async function runSource(sourceId: string, opts: RunSourceOptions): Promi
 
     let fetched: FetchResult;
     try {
-      fetched = await getAdapter(source.type).fetch(source, {
+      fetched = await fetchWithBudget(getAdapter(source.type), source, {
         force: opts.force,
         signal: opts.signal ?? new AbortController().signal,
         fetcher: opts.fetcher,
@@ -91,6 +92,12 @@ export async function runSource(sourceId: string, opts: RunSourceOptions): Promi
         kevItemLookbackDays: getEnv().KEV_ITEM_LOOKBACK_DAYS,
       });
     } catch (err) {
+      if (err instanceof BudgetError) {
+        // Paid source switched off or over its monthly cap: a skip, not a source failure.
+        const outcome = result(err.reason === "cap" ? "skipped_budget" : "skipped_disabled", started, { error: err.message });
+        if (opts.runId) await recordRunSourceResult(db, opts.runId, sourceId, outcome);
+        return outcome;
+      }
       return await handleFailure(db, source, err, started, opts);
     }
 

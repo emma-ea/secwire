@@ -8,6 +8,7 @@ import type { DashboardStatus } from "@/ingest/dashboard";
 import type { SchedulerState } from "@/ingest/scheduler-service";
 import { btn, btnPrimary, Panel } from "../ui";
 import { ClusterPanel } from "./ClusterPanel";
+import { SpendPanel } from "./SpendPanel";
 import { RunsTable } from "./RunsTable";
 import { SchedulerPanel } from "./SchedulerPanel";
 import { SourcesTable } from "./SourcesTable";
@@ -115,6 +116,7 @@ export function Dashboard({ initialStatus, scheduler }: { initialStatus: Dashboa
           )}
         </Panel>
         <ClusterPanel backlog={status.backlog} onDone={changed} />
+        <SpendPanel spend={status.spend} />
         </div>
       </div>
 

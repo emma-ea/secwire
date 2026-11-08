@@ -1,5 +1,6 @@
 import type { sources } from "../../db/schema";
 import type { SafeFetchOptions, SafeResponse } from "../../lib/safe-fetch";
+import type { Provider, Usage } from "../spend";
 
 export type Source = typeof sources.$inferSelect;
 export type SourceType = Source["type"];
@@ -62,13 +63,20 @@ export type AdapterContext = {
   /** Backfill window (HN only). */
   range?: { since: Date; until?: Date };
   kevItemLookbackDays?: number;
+  /** X credentials and price (Phase 3), filled in from env by runSource/testSource for `x` sources. */
+  x?: { bearerToken: string; postReadUsd: number };
+  /** Paid adapters report usage per HTTP request, so partial failures are still billed (see spend.ts). */
+  trackUsage?: (u: Partial<Usage>) => void;
 };
 
 export interface SourceAdapter {
   type: SourceType;
   /** Outbound requests per normal fetch, for the cost estimate (§7.5). */
   requestsPerFetch(source: Pick<Source, "config">): number;
-  costPerRequestUsd?: number;
+  /** Worst-case USD per outbound request, for the cost estimate (§7.5). Paid sources only. */
+  costPerRequestUsd?(source: Pick<Source, "config">): number;
+  /** Paid sources (X): fetches run under the provider's monthly cap (src/ingest/spend.ts). */
+  paid?: { provider: Provider; maxCostPerFetchUsd(source: Pick<Source, "config">): number };
   supportsBackfill: boolean;
   fetch(source: Source, ctx: AdapterContext): Promise<FetchResult>;
 }

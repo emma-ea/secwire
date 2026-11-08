@@ -156,6 +156,9 @@ function guardedLookup(policy: Policy): net.LookupFunction {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+/** Request headers that carry secrets (X bearer token, NVD apiKey); stripped on cross-origin redirects. */
+export const CREDENTIAL_HEADERS = ["authorization", "proxy-authorization", "cookie", "apikey", "x-api-key"] as const;
+
 export async function safeFetch(input: string, opts: SafeFetchOptions = {}): Promise<SafeResponse> {
   const timeoutMs = opts.timeoutMs ?? SAFE_FETCH_DEFAULTS.timeoutMs;
   const maxBytes = opts.maxBytes ?? SAFE_FETCH_DEFAULTS.maxBytes;
@@ -183,7 +186,12 @@ export async function safeFetch(input: string, opts: SafeFetchOptions = {}): Pro
         if (redirects >= maxRedirects) {
           throw new SafeFetchError("too_many_redirects", `More than ${maxRedirects} redirects`);
         }
-        url = parseTarget(new URL(location, url).toString());
+        const next = parseTarget(new URL(location, url).toString());
+        // Like browsers and undici: credentials never follow a redirect to another origin.
+        if (next.origin !== url.origin) {
+          for (const h of CREDENTIAL_HEADERS) delete headers[h];
+        }
+        url = next;
         continue;
       }
       return { ...res, url: url.toString(), redirects, text: () => res.body.toString("utf8") };

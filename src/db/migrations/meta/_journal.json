@@ -36,6 +36,13 @@
       "when": 1794173232310,
       "tag": "0004_phase3_social_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794173550559,
+      "tag": "0005_phase3_x_spend",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@
  */
 import { getEnv } from "../env";
 import { SafeFetchError } from "../lib/safe-fetch";
+import { fetchWithBudget } from "./spend";
 import { getAdapter, SourceHttpError, type AdapterContext, type NormalizedItem, type Source } from "./adapters";
 
 export const TEST_SOURCE_TIMEOUT_MS = 20_000;
@@ -44,7 +45,7 @@ export async function testSource(
     config: input.config ?? {},
   };
   try {
-    const r = await getAdapter(source.type).fetch(source, {
+    const r = await fetchWithBudget(getAdapter(source.type), source, {
       force: true,
       signal: AbortSignal.timeout(TEST_SOURCE_TIMEOUT_MS),
       timeoutMs: TEST_SOURCE_TIMEOUT_MS,

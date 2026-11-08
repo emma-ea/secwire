@@ -14,11 +14,13 @@ const allowLoopback = (addr: string, fam: 4 | 6) => addr === "127.0.0.1" || isPu
 let server: http.Server;
 let base: string;
 let lastUserAgent: string | undefined;
+const seenAuth: Array<{ path: string; authorization?: string; apikey?: string }> = [];
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
     lastUserAgent = req.headers["user-agent"];
     const u = new URL(req.url ?? "/", "http://x");
+    seenAuth.push({ path: u.pathname, authorization: req.headers.authorization, apikey: req.headers.apikey as string | undefined });
     switch (u.pathname) {
       case "/ok":
         res.setHeader("etag", '"v1"');
@@ -41,6 +43,14 @@ beforeAll(async () => {
       case "/to-localhost-name":
         res.statusCode = 301;
         res.setHeader("location", `http://localhost:${(server.address() as AddressInfo).port}/ok`);
+        return res.end();
+      case "/to-same-origin":
+        res.statusCode = 302;
+        res.setHeader("location", "/ok");
+        return res.end();
+      case "/to-other-origin":
+        res.statusCode = 307;
+        res.setHeader("location", u.searchParams.get("to") ?? "/ok");
         return res.end();
       case "/to-file":
         res.statusCode = 302;
@@ -168,6 +178,30 @@ describe("safeFetch", () => {
     const policy = (a: string, f: 4 | 6) =>
       a === "127.0.0.1" && loopbackChecks++ === 0 ? true : isPublicAddress(a, f);
     await expectCode(safeFetch(`${base}/to-localhost-name`, { addressPolicy: policy }), "blocked_address");
+  });
+
+  it("keeps credentials on same-origin redirects and drops them across origins", async () => {
+    const other = http.createServer((req, res) => {
+      seenAuth.push({ path: "other", authorization: req.headers.authorization, apikey: req.headers.apikey as string | undefined });
+      res.end("other");
+    });
+    await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+    try {
+      const otherBase = `http://127.0.0.1:${(other.address() as AddressInfo).port}`;
+      const creds = { headers: { authorization: "Bearer secret", apikey: "k" } };
+      seenAuth.length = 0;
+      await get("/to-same-origin", creds);
+      expect(seenAuth.map((s) => s.authorization)).toEqual(["Bearer secret", "Bearer secret"]);
+      seenAuth.length = 0;
+      const res = await get(`/to-other-origin?to=${encodeURIComponent(`${otherBase}/x`)}`, creds);
+      expect(res.text()).toBe("other");
+      expect(seenAuth).toEqual([
+        { path: "/to-other-origin", authorization: "Bearer secret", apikey: "k" },
+        { path: "other", authorization: undefined, apikey: undefined },
+      ]);
+    } finally {
+      other.close();
+    }
   });
 
   it("refuses non-http(s) redirect targets", async () => {

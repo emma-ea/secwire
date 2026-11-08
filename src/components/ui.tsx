@@ -40,6 +40,7 @@ const STATUS_TONES: Record<string, Tone> = {
   skipped_locked: "muted",
   skipped_disabled: "muted",
   skipped_cooldown: "muted",
+  skipped_budget: "warn",
   cancelled: "muted",
 };
 
@@ -48,6 +49,7 @@ const STATUS_LABELS: Record<string, string> = {
   skipped_locked: "skipped (locked)",
   skipped_disabled: "skipped (disabled)",
   skipped_cooldown: "skipped (cooldown)",
+  skipped_budget: "skipped (spend cap)",
   coalesced: "already queued",
 };
 

@@ -1,5 +1,6 @@
 /** Everything the admin dashboard polls for, in one call. */
 import { sql } from "drizzle-orm";
+import { spendSummary } from "./spend";
 import { getDb } from "../db/client";
 import { WORKER_OFFLINE_AFTER_SEC } from "../lib/scheduler";
 import { getSenderBoss } from "./boss";
@@ -11,7 +12,7 @@ export type DashboardStatus = Awaited<ReturnType<typeof getDashboardStatus>>;
 
 export async function getDashboardStatus() {
   const db = getDb();
-  const [runs, sources, beat, queues, backlog] = await Promise.all([
+  const [runs, sources, beat, queues, backlog, spend] = await Promise.all([
     listRuns(db, 15),
     listSourcesForAdmin(),
     db.execute<{ age: number | null }>(
@@ -25,6 +26,7 @@ export async function getDashboardStatus() {
              (SELECT count(DISTINCT ic.cve_id) FROM item_cves ic JOIN cves c ON c.id = ic.cve_id
                WHERE c.epss_enriched_at IS NULL)::int AS epss_pending,
              (SELECT count(*) FROM stories)::int AS stories`),
+    spendSummary(),
   ]);
   const age = beat.rows[0]?.age ?? null;
   return {
@@ -68,6 +70,8 @@ export async function getDashboardStatus() {
       epssPending: backlog.rows[0]?.epss_pending ?? 0,
       stories: backlog.rows[0]?.stories ?? 0,
     },
+    /** Paid providers (Phase 3): month-to-date spend against each cap. */
+    spend,
   };
 }
 

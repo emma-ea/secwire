@@ -11,7 +11,7 @@ export type RunSourceStatus = (typeof ingestionRunSources.$inferSelect)["status"
 export type RunStatus = (typeof ingestionRuns.$inferSelect)["status"];
 
 export type RunSourceResult = {
-  status: Extract<RunSourceStatus, "succeeded" | "not_modified" | "skipped_locked" | "failed">;
+  status: Extract<RunSourceStatus, "succeeded" | "not_modified" | "skipped_locked" | "failed" | "skipped_disabled" | "skipped_budget">;
   httpStatus: number | null;
   itemsSeen: number;
   itemsNew: number;

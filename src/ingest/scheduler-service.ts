@@ -5,9 +5,10 @@
  */
 import { asc, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { getDb, type Db } from "../db/client";
+import { getDb, getPool, type Db } from "../db/client";
 import { appSettings, sources } from "../db/schema";
 import { getEnv } from "../env";
+import { budgetBlock } from "./spend";
 import {
   SCHEDULER_INTERVAL_PRESETS,
   WORKER_OFFLINE_AFTER_SEC,
@@ -84,7 +85,7 @@ export async function getSchedulerState(db: Db = getDb(), now = new Date()): Pro
       effectiveIntervalMinutes: effectiveIntervalMinutes(g, s.minIntervalMinutes),
       overrideIgnored: overrideIsBelowGlobal(g, s.minIntervalMinutes),
       requestsPerFetch: adapter.requestsPerFetch(s),
-      costPerRequestUsd: adapter.costPerRequestUsd ?? 0,
+      costPerRequestUsd: adapter.costPerRequestUsd?.(s) ?? 0,
       nextDueAt: active && s.enabled ? nextDueAt(s.lastFetchedAt, g, s.minIntervalMinutes, now).toISOString() : null,
     };
   });
@@ -203,11 +204,27 @@ export async function syncSchedules(
 export async function findDueSources(db: Db, now: Date): Promise<string[]> {
   const s = await getSettings(db);
   const rows = await db
-    .select({ id: sources.id, lastFetchedAt: sources.lastFetchedAt, minIntervalMinutes: sources.minIntervalMinutes })
+    .select({
+      id: sources.id,
+      type: sources.type,
+      config: sources.config,
+      lastFetchedAt: sources.lastFetchedAt,
+      minIntervalMinutes: sources.minIntervalMinutes,
+    })
     .from(sources)
     .where(eq(sources.enabled, true))
     .orderBy(asc(sources.id));
-  return rows
-    .filter((r) => isSourceDue(r.lastFetchedAt, effectiveIntervalMinutes(s.schedulerIntervalMinutes, r.minIntervalMinutes), now))
-    .map((r) => r.id);
+  const due = rows.filter((r) =>
+    isSourceDue(r.lastFetchedAt, effectiveIntervalMinutes(s.schedulerIntervalMinutes, r.minIntervalMinutes), now),
+  );
+  // Paid sources that are switched off or over their monthly cap aren't due:
+  // otherwise every tick would record a skipped run for them until next month.
+  // Manual triggers still go through and record why they were skipped.
+  const out: string[] = [];
+  for (const r of due) {
+    const paid = getAdapter(r.type).paid;
+    if (paid && (await budgetBlock(paid.provider, paid.maxCostPerFetchUsd(r), getPool(), now))) continue;
+    out.push(r.id);
+  }
+  return out;
 }
