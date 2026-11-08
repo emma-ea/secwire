@@ -6,7 +6,7 @@ SecWire is a security-news aggregator: it ingests RSS, CISA KEV and Hacker News,
 
 ## Working rules (from SPEC.md)
 
-- Work **one phase at a time** (SPEC §12). At the start of a phase, propose a plan and wait for approval. At the end, run `pnpm typecheck && pnpm lint && pnpm test`, summarize, and stop. Phase 3 items are not built until asked.
+- Work **one phase at a time** (SPEC §12). At the start of a phase, propose a plan and wait for approval. At the end, run `pnpm typecheck && pnpm lint && pnpm test`, summarize, and stop. Phase 3 (the last SPEC phase) is built; anything further waits for the user.
 - Don't add dependencies beyond SPEC §3 without asking.
 - When something is ambiguous, pick the simpler option and record it in `DECISIONS.md`.
 - Commit at each coherent step of progress, not only at the end of a phase.
@@ -58,6 +58,13 @@ docker compose --profile app up --build      # full stack in containers (migrate
 
 **Enrichment and clustering (Phase 2).** After `runSource` commits, `afterIngest` (`src/ingest/hooks.ts`) enqueues `cluster.items` and one `enrich.cve` per item-linked CVE that NVD hasn't been asked about yet. KEV catalog-only CVEs are deliberately never auto-enriched. `enrich.cve` runs at concurrency 1 behind the in-process NVD throttle (`src/ingest/enrich/throttle.ts`). `src/ingest/cluster.ts` implements the §6.5 rules and `recluster`. `src/ingest/stories.ts` `refreshStories()` is the **only** code that computes a story's denormalized fields (counts, times, `story_cves`, badges, vendors, title). Every writer of story rows takes the `secwire:stories` advisory lock (`lockStories`). Enrich and recluster runs are `ingestion_runs` rows with no per-source rows; `src/ingest/trigger-jobs.ts` creates them, used by the CLI, admin API and Server Actions alike. Recluster jobs use `singletonKey: "recluster"` so a queued pipeline cluster job can't swallow them.
 
+**Phase 3 (social, paid APIs, summaries, alerts).**
+- **Social adapters.** Bluesky and Mastodon (`src/ingest/adapters/{bluesky,mastodon}.ts`) take a profile URL. They share the relevance filter and URL mapping in `adapters/social.ts`: kept posts mention a CVE, or link out and match `SECURITY_KEYWORDS`; the item URL is the linked article and `raw.postUrl` is the post.
+- **Paid calls.** X (`adapters/x.ts`) and AI summaries both go through `withBudget()` in `src/ingest/spend.ts`. It takes a per-provider advisory lock, refuses the call if month-to-date spend plus the call's worst case would exceed the cap, and records actual usage in `api_spend`, even after a partial failure. A refused fetch records `skipped_budget` or `skipped_disabled`, and the tick leaves blocked paid sources out of its due list.
+- **Summaries.** `src/ingest/summarize.ts` writes one summary per story, regenerated when `item_count` differs from `summary_item_count`. `summarize.story` jobs are queued after clustering and on the tick.
+- **Alerts.** `src/ingest/alerts.ts` handles watchlists and deliveries. `alert_deliveries` is unique on (watchlist, anchor item = earliest item, kind), which is what makes alerts at-most-once, even across recluster. Saving a watchlist baselines the stories that already match. `alerts.scan` runs after clustering and enrichment, and on the tick.
+- **Off by default.** Every Phase 3 integration is off until its env is set: `X_ENABLED` + `X_BEARER_TOKEN`, `ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`, and the `SMTP_*`/`ALERT_EMAIL_*` variables.
+
 **Read side.** Public pages (`/`, `/story/[id]`, `/cve/[id]`) query through `src/feed/queries.ts`. `src/feed/params.ts` is pure: it parses URL filters and encodes/validates keyset cursors, whose values are kept as Postgres text so timestamps keep microseconds.
 
 **Job handlers** live in `src/ingest/handlers.ts` and are thin. `worker/index.ts` only wires them to queues, which is why integration tests can call `handleTick` and `handleSourceJob` directly.
@@ -80,6 +87,7 @@ docker compose --profile app up --build      # full stack in containers (migrate
   - Every outbound fetch goes through `src/lib/safe-fetch.ts`, which applies the SSRF guard on each redirect hop.
   - Feed content is rendered as plain text only; never use `dangerouslySetInnerHTML` on it.
   - Public error responses never include internal error details.
+- **Tests that touch Phase 3 env** (X, AI, alert channels) set `process.env` and call `resetEnvCache()` from `src/env.ts`. Summaries take a fake `SummaryClient`, and alerts take fake `Senders`.
 - **Tests that enrich** pass `throttle: new Throttle(0, realClock, { initial: 1, max: 1 })` and a `fakeFetcher` serving `tests/fixtures/nvd-*.json` / `epss-batch.json`, so they never sleep or hit the network.
 - **Dev server reload loop:** if every page reloads endlessly in `pnpm dev` (Turbopack HMR keeps sending `restart`), stop the dev server, delete `.next`, and start it again.
 - `DECISIONS.md` ends with a table mapping every SPEC §7.4 scenario to its test or manual check. Keep it current when behavior changes.

@@ -19,6 +19,7 @@ import {
 import { InvalidCveIdError, type EnrichDeps } from "./enrich/service";
 import { enqueueClusterIfPending } from "./hooks";
 import { runSource, type RunSourceOptions } from "./run-source";
+import { enqueueAlertScan, scanAlerts, type Senders } from "./alerts";
 import { BudgetError } from "./spend";
 import { enqueueSummaries, summarizeStory, type SummaryClient } from "./summarize";
 import {
@@ -44,6 +45,8 @@ export async function handleTick(now = new Date()): Promise<{ runId: string | nu
   // Self-healing: items whose post-ingest cluster job was lost still get clustered.
   await enqueueClusterIfPending().catch((err: unknown) => console.error("[tick] cluster enqueue failed:", err));
   await enqueueSummaries().catch((err: unknown) => console.error("[tick] summary enqueue failed:", err));
+  // Also retries failed deliveries every tick.
+  await enqueueAlertScan().catch((err: unknown) => console.error("[tick] alert scan enqueue failed:", err));
 
   const settings = await getSettings(db);
   if (!settings.schedulerEnabled) return { runId: null, due: [] };
@@ -144,9 +147,14 @@ async function withJobRun<T>(
 /** enrich.cve: NVD (throttled) + EPSS for one CVE. Rate limits and network errors throw → retry with backoff. */
 export async function handleEnrichCveJob(job: JobLike<EnrichCveJob>, deps: Omit<EnrichDeps, "signal"> = {}) {
   try {
-    return await withJobRun(QUEUES.enrichCve, job, () =>
+    const r = await withJobRun(QUEUES.enrichCve, job, () =>
       runEnrichCve(getDb(), job.data.runId, job.data, { ...deps, signal: job.signal }),
     );
+    // New CVSS/KEV data can make a story match a watchlist (or escalate to KEV).
+    if (r && r.storiesRefreshed > 0) {
+      await enqueueAlertScan().catch((err: unknown) => console.error("[enrich] alert scan enqueue failed:", err));
+    }
+    return r;
   } catch (err) {
     // A malformed id will never succeed: don't retry it.
     if (err instanceof InvalidCveIdError) return null;
@@ -175,9 +183,16 @@ export async function handleEnrichRefreshJob(
 /** cluster.items: clusters unassigned items, or reclusters when `since` is set. */
 export async function handleClusterJob(job: JobLike<ClusterJob>, deps: { boss?: PgBoss } = {}) {
   const r = await withJobRun(QUEUES.cluster, job, () => runCluster(getDb(), job.data.runId, job.data));
-  // Stories that gained items may need a new summary (no-op when AI summaries are off).
+  // Stories that gained items may need a new summary (no-op when AI summaries are off)
+  // and may now match a watchlist (no-op without enabled watchlists).
   await enqueueSummaries({ boss: deps.boss }).catch((err: unknown) => console.error("[cluster] summary enqueue failed:", err));
+  await enqueueAlertScan({ boss: deps.boss }).catch((err: unknown) => console.error("[cluster] alert scan enqueue failed:", err));
   return r;
+}
+
+/** alerts.scan: match watchlists, record and deliver alerts (src/ingest/alerts.ts). */
+export async function handleAlertScanJob(deps: { senders?: Senders } = {}) {
+  return scanAlerts({ senders: deps.senders });
 }
 
 /**

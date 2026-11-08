@@ -46,6 +46,15 @@ export const envSchema = z
     /** USD per million tokens; only needed for a SUMMARY_MODEL missing from the built-in price table. */
     AI_INPUT_USD_PER_MTOK: z.coerce.number().min(0).optional(),
     AI_OUTPUT_USD_PER_MTOK: z.coerce.number().min(0).optional(),
+    // Phase 3: watchlist alerts. A channel is available when its settings are present.
+    /** Public base URL of the app, for links in alerts (e.g. https://secwire.example.com). */
+    APP_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
+    SLACK_WEBHOOK_URL: optionalString.pipe(z.url({ protocol: /^https$/ }).optional()),
+    /** smtp(s)://user:pass@host:port */
+    SMTP_URL: optionalString.pipe(z.string().regex(/^smtps?:\/\//, "must be an smtp:// or smtps:// URL").optional()),
+    ALERT_EMAIL_FROM: optionalString,
+    /** Comma-separated recipients. */
+    ALERT_EMAIL_TO: optionalString,
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== "production") return;

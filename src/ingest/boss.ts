@@ -17,6 +17,7 @@ export const QUEUES = {
   enrichRefresh: "enrich.refresh",
   cluster: "cluster.items",
   summarize: "summarize.story",
+  alertsScan: "alerts.scan",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -49,6 +50,8 @@ export const QUEUE_DEFINITIONS: Record<QueueName, Omit<Queue, "name">> = {
   [QUEUES.cluster]: { policy: "stately", retryLimit: 3, retryDelay: 15, retryBackoff: true, expireInSeconds: 1800 },
   // Phase 3: one queued job per story (singletonKey = story id); paid, so few retries.
   [QUEUES.summarize]: { policy: "stately", retryLimit: 2, retryDelay: 60, retryBackoff: true, expireInSeconds: 300 },
+  // One queued + one active scan; failed deliveries are retried by the next scan, not by pg-boss.
+  [QUEUES.alertsScan]: { policy: "stately", retryLimit: 1, retryDelay: 60, expireInSeconds: 600 },
 };
 
 export const RECLUSTER_SINGLETON_KEY = "recluster";

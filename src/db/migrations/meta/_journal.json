@@ -50,6 +50,13 @@
       "when": 1794173996733,
       "tag": "0006_phase3_story_summaries",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794174434083,
+      "tag": "0007_phase3_watchlists_alerts",
+      "breakpoints": true
     }
   ]
 }

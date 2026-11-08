@@ -20,6 +20,7 @@ import {
 } from "../src/ingest/boss";
 import { nvdSpacingMs } from "../src/ingest/enrich/throttle";
 import {
+  handleAlertScanJob,
   handleClusterJob,
   handleEnrichCveJob,
   handleEnrichRefreshJob,
@@ -32,6 +33,7 @@ import {
 import { enqueueClusterIfPending } from "../src/ingest/hooks";
 import { reconcileStaleJobRuns, reconcileStaleRunSources } from "../src/ingest/runs";
 import { PROVIDERS, providerStatus } from "../src/ingest/spend";
+import { channelStatus } from "../src/ingest/alerts";
 import {
   HEARTBEAT_INTERVAL_MS,
   pruneHeartbeats,
@@ -135,6 +137,11 @@ async function main() {
     else if (r.reason.includes("cap") || r.reason.startsWith("API error")) log(`summarize ${job.data.storyId}: skipped (${r.reason})`);
   });
 
+  await boss.work(QUEUES.alertsScan, { localConcurrency: 1 }, async () => {
+    const r = await handleAlertScanJob();
+    if (r.created || r.sent || r.failed) log(`alerts.scan → ${r.created} new alert(s), ${r.sent} sent, ${r.failed} failed, ${r.skipped} skipped`);
+  });
+
   await boss.work(QUEUES.prune, { localConcurrency: 1 }, async () => {
     const r = await handlePrune();
     log(`prune → ${r.runs} run(s), ${r.logins} login attempt(s), ${r.heartbeats} heartbeat(s)`);
@@ -158,6 +165,8 @@ async function main() {
   };
   await beat();
   const timer = setInterval(() => void beat(), HEARTBEAT_INTERVAL_MS);
+  const ch = channelStatus();
+  log(`alert channels: slack ${ch.slack.configured ? "on" : "off"}, email ${ch.email.configured ? "on" : "off"}`);
   for (const p of PROVIDERS) {
     const st = providerStatus(p);
     log(`${st.label}: ${st.enabled ? `on, monthly cap $${st.capUsd}` : `off (${st.disabledReason})`}`);

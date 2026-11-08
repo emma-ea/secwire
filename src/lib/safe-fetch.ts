@@ -52,6 +52,9 @@ export type SafeFetchOptions = {
   maxBytes?: number;
   maxRedirects?: number;
   signal?: AbortSignal;
+  /** POST is for outbound notifications (Slack webhooks). Redirects are never followed for POST. */
+  method?: "GET" | "POST";
+  body?: string;
   /**
    * Override of the address policy. Tests only — production code must never
    * pass this. Defaults to isPublicAddress.
@@ -180,9 +183,10 @@ export async function safeFetch(input: string, opts: SafeFetchOptions = {}): Pro
   let url = parseTarget(input);
   for (let redirects = 0; ; redirects++) {
     try {
-      const res = await requestOnce(url, headers, signal, maxBytes, policy);
+      const method = opts.method ?? "GET";
+      const res = await requestOnce(url, headers, signal, maxBytes, policy, method, opts.body);
       const location = res.headers.get("location");
-      if (REDIRECT_STATUSES.has(res.status) && location) {
+      if (method === "GET" && REDIRECT_STATUSES.has(res.status) && location) {
         if (redirects >= maxRedirects) {
           throw new SafeFetchError("too_many_redirects", `More than ${maxRedirects} redirects`);
         }
@@ -236,12 +240,20 @@ function requestOnce(
   signal: AbortSignal,
   maxBytes: number,
   policy: Policy,
+  method: "GET" | "POST" = "GET",
+  body?: string,
 ): Promise<Omit<SafeResponse, "url" | "redirects" | "text">> {
   const mod = url.protocol === "https:" ? https : http;
   return new Promise((resolve, reject) => {
     const req = mod.request(
       url,
-      { method: "GET", headers, signal, lookup: guardedLookup(policy), agent: false },
+      {
+        method,
+        headers: body === undefined ? headers : { ...headers, "content-length": String(Buffer.byteLength(body)) },
+        signal,
+        lookup: guardedLookup(policy),
+        agent: false,
+      },
       (res) => {
         const status = res.statusCode ?? 0;
         const h = new Headers();
@@ -290,6 +302,6 @@ function requestOnce(
       const cause = (err as { cause?: unknown }).cause;
       reject(err instanceof SafeFetchError ? err : cause instanceof SafeFetchError ? cause : err);
     });
-    req.end();
+    req.end(body);
   });
 }

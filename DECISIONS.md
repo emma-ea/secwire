@@ -517,3 +517,41 @@ New dependencies, approved by the user: `@anthropic-ai/sdk` and `nodemailer` (wi
   - The system prompt says the content is quoted material, not instructions. There are no tools, so the worst a malicious feed item can do is skew its own story's summary.
   - The output is cleaned to one plain-text paragraph (markdown removed, at most 700 characters) and rendered as text. The story page labels it "AI summary … may contain errors" and says when newer items aren't included yet.
 - **Not verified live.** There is no Anthropic key in this environment; tests use a fake client.
+
+### Watchlists and alerts (migration 0007)
+- **Single admin**, so there's no per-user ownership. Channel credentials live in env per §10, not the DB:
+  - Slack: `SLACK_WEBHOOK_URL` (https only).
+  - Email: `SMTP_URL` + `ALERT_EMAIL_FROM` + `ALERT_EMAIL_TO`.
+  - Each watchlist picks among the channels that are configured.
+- **Matching.** A term matches when it is:
+  - a case-insensitive substring of a linked CVE's KEV/NVD vendor + product, or
+  - a whole word (`\m…\M`) in the story title.
+  - Title matching catches stories without CVEs, such as "Exchange Online phishing". Whole words keep "exchange" from matching "exchanges".
+  - The optional filters are min CVSS, KEV only and ransomware only.
+  - Only stories active in the last 7 days are matched.
+- **At most once:**
+  - `alert_deliveries` is unique on `(watchlist, anchor item, kind)`. The anchor is the story's earliest item, because `recluster` gives stories new ids but rebuilds the same groups; the test reclusters and checks that nothing is resent.
+  - Kinds: `new` on the first match, and `kev` once when a story alerted while not in KEV later enters KEV.
+  - Inserts are `ON CONFLICT DO NOTHING`, and only the rows actually inserted are delivered.
+- **Baseline on save.** Creating or editing a watchlist writes `new` rows with status `skipped` for every story that already matches, so a new watchlist doesn't flood Slack with last week's news. The editor's "Preview matches" shows exactly those stories.
+- **Delivery:**
+  - The `alerts.scan` job (stately, concurrency 1) runs after every cluster job, after an `enrich.cve` that refreshed stories, and on every tick. The tick run also retries failures.
+  - A `pg_try_advisory_lock` means a second scanner skips instead of double-sending.
+  - Failed rows retry up to 3 attempts, and only to channels that haven't accepted the alert (`sent_channels`).
+  - The message is built from the story's current state (title, KEV/CVSS/EPSS, CVEs, vendors, AI summary if any, and a link when `APP_URL` is set).
+- **Injection safety:**
+  - Slack text escapes `& < >`, so feed text can't produce `<!channel>` pings or fake links.
+  - Email is plain text only, and the subject is one line (CR/LF removed).
+  - Slack is a POST through `safeFetch`, which gained `method`/`body` for this. POST never follows redirects.
+- **Admin:**
+  - `/admin/watchlists` (linked from the dashboard): list, add, edit, delete, preview, "Send test", and recent alerts.
+  - Server Actions plus `GET/POST /api/admin/watchlists`, `PUT/DELETE /api/admin/watchlists/:id` and `POST /api/admin/watchlists/:id/test`. All of them go through `requireAdmin` / `guardAdminApi`.
+
+### Phase 3 checks by hand (2026-11-08, dev stack)
+- `pnpm db:seed` verified all 10 social accounts. The first worker cluster run after the restart attached 3 social posts to existing article stories by URL.
+- `x-researchers` was seeded disabled ("X integration is off"). The worker logs the status of X, AI summaries and alert channels at startup; all are off here.
+- In Chrome, on `/admin/watchlists`:
+  - A watchlist "Apple, Microsoft, SonicWall, WordPress" previewed 13 real stories. Saving it baselined 13, and a real `scanAlerts()` then created 0 alerts.
+  - "Send test" reported that no channel is configured. Deleting it removed its rows.
+- The watchlist API returns 401 without a session and 403 with a foreign Origin.
+- Not verified live, for lack of credentials: X, the Anthropic API, Slack and SMTP. Each is covered by fixture or fake-client tests.

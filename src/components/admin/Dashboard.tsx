@@ -128,6 +128,9 @@ export function Dashboard({ initialStatus, scheduler }: { initialStatus: Dashboa
             <Link href="/admin/sources/new" className={btn}>
               Add source
             </Link>
+            <Link href="/admin/watchlists" className={btn}>
+              Watchlists
+            </Link>
           </div>
         }
       >

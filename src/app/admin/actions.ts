@@ -8,6 +8,15 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { attemptLogin, logout, requireAdmin } from "@/lib/auth";
+import {
+  createWatchlist,
+  deleteWatchlist,
+  matchingStories,
+  sendTestAlert,
+  updateWatchlist,
+  watchlistInputSchema,
+  type WatchlistInput,
+} from "@/ingest/alerts";
 import { cancelRun } from "@/ingest/cancel";
 import { getSchedulerState, SettingsValidationError, updateSchedulerSettings } from "@/ingest/scheduler-service";
 import {
@@ -169,4 +178,45 @@ export async function saveSchedulerAction(input: {
 export async function getSchedulerStateAction() {
   await requireAdmin();
   return getSchedulerState();
+}
+
+// --- Watchlists (Phase 3) ----------------------------------------------------
+
+function watchlistError(err: z.ZodError): string {
+  const i = err.issues[0];
+  return i ? `${i.path.join(".") || "input"}: ${i.message}` : "Invalid input";
+}
+
+export async function saveWatchlistAction(
+  id: string | null,
+  input: WatchlistInput,
+): Promise<ActionResult<{ id: string; baselined: number }>> {
+  await requireAdmin();
+  const parsed = watchlistInputSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: watchlistError(parsed.error) };
+  const r = id ? await updateWatchlist(id, parsed.data) : await createWatchlist(parsed.data);
+  if (!r) return { ok: false, error: "Watchlist not found" };
+  return { ok: true, data: { id: r.watchlist.id, baselined: r.baselined } };
+}
+
+export async function deleteWatchlistAction(id: string): Promise<ActionResult<null>> {
+  await requireAdmin();
+  return (await deleteWatchlist(String(id))) ? { ok: true, data: null } : { ok: false, error: "Watchlist not found" };
+}
+
+export async function testWatchlistAction(id: string): Promise<ActionResult<{ sent: string[]; errors: string[] }>> {
+  await requireAdmin();
+  const r = await sendTestAlert(String(id));
+  return r ? { ok: true, data: r } : { ok: false, error: "Watchlist not found" };
+}
+
+/** Recent stories an (unsaved) watchlist would match, so the admin can tune terms before saving. */
+export async function previewWatchlistAction(
+  input: WatchlistInput,
+): Promise<ActionResult<Array<{ id: string; title: string; has_kev: boolean; max_cvss: number | null }>>> {
+  await requireAdmin();
+  const parsed = watchlistInputSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: watchlistError(parsed.error) };
+  const rows = await matchingStories(parsed.data, { limit: 20 });
+  return { ok: true, data: rows.map((s) => ({ id: s.id, title: s.title, has_kev: s.has_kev, max_cvss: s.max_cvss })) };
 }

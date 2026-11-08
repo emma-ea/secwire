@@ -78,4 +78,22 @@ describe("parseEnv", () => {
       /ADMIN_PASSWORD: still set to the \.env\.example placeholder/,
     );
   });
+
+  it("Phase 3 features are off by default and validate their settings", () => {
+    const env = parseEnv(valid);
+    expect([env.X_ENABLED, env.X_MONTHLY_CAP_USD, env.ANTHROPIC_API_KEY, env.SUMMARY_MODEL, env.AI_MONTHLY_CAP_USD]).toEqual([
+      false,
+      10,
+      undefined,
+      "claude-haiku-5-5",
+      5,
+    ]);
+    expect([env.SLACK_WEBHOOK_URL, env.SMTP_URL, env.APP_URL]).toEqual([undefined, undefined, undefined]);
+    expect(parseEnv({ ...valid, SLACK_WEBHOOK_URL: "", APP_URL: " " }).SLACK_WEBHOOK_URL).toBeUndefined();
+    expect(() => parseEnv({ ...valid, SLACK_WEBHOOK_URL: "http://hooks.slack.com/x" })).toThrow(/SLACK_WEBHOOK_URL/);
+    expect(() => parseEnv({ ...valid, SMTP_URL: "https://mail.example.com" })).toThrow(/SMTP_URL/);
+    expect(() => parseEnv({ ...valid, APP_URL: "javascript:alert(1)" })).toThrow(/APP_URL/);
+    expect(parseEnv({ ...valid, SMTP_URL: "smtps://u:p@mail.example.com:465" }).SMTP_URL).toBe("smtps://u:p@mail.example.com:465");
+    expect(() => parseEnv({ ...valid, X_MONTHLY_CAP_USD: "-1" })).toThrow(/X_MONTHLY_CAP_USD/);
+  });
 });

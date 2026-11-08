@@ -455,3 +455,69 @@ export const apiSpend = pgTable(
     check("api_spend_month_format", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// Phase 3: vendor watchlists and alerts
+// ---------------------------------------------------------------------------
+
+export const alertChannel = pgEnum("alert_channel", ["slack", "email"]);
+export const alertKind = pgEnum("alert_kind", ["new", "kev"]);
+export const alertStatus = pgEnum("alert_status", ["pending", "sent", "failed", "skipped"]);
+
+/** A vendor/product watchlist (single admin). See src/ingest/alerts.ts. */
+export const watchlists = pgTable(
+  "watchlists",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull(),
+    /** Case-insensitive terms matched against KEV/NVD vendor + product, and as whole words in the story title. */
+    terms: text().array().notNull(),
+    minCvss: numeric({ precision: 3, scale: 1, mode: "number" }),
+    kevOnly: boolean().notNull().default(false),
+    ransomwareOnly: boolean().notNull().default(false),
+    channels: alertChannel().array().notNull().default(sql`'{}'::alert_channel[]`),
+    enabled: boolean().notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    check("watchlists_terms_nonempty", sql`cardinality(${t.terms}) > 0`),
+    check("watchlists_min_cvss_range", sql`${t.minCvss} IS NULL OR (${t.minCvss} >= 0 AND ${t.minCvss} <= 10)`),
+  ],
+);
+
+/**
+ * One row per (watchlist, story, kind): the at-most-once guarantee. Stories are
+ * identified by their earliest item (anchor), which survives recluster, since
+ * story ids don't. Stories that already matched when the watchlist was saved
+ * get a "new" row with status "skipped" (baseline), so they never alert.
+ */
+export const alertDeliveries = pgTable(
+  "alert_deliveries",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    watchlistId: uuid()
+      .notNull()
+      .references(() => watchlists.id, { onDelete: "cascade" }),
+    anchorItemId: uuid()
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    kind: alertKind().notNull(),
+    storyId: uuid(),
+    title: text().notNull(),
+    /** Whether the story was in KEV when this row was written (KEV escalation follows a non-KEV alert). */
+    hadKev: boolean().notNull(),
+    status: alertStatus().notNull().default("pending"),
+    /** Channels that already accepted this alert; a retry only resends to the others. */
+    sentChannels: alertChannel().array().notNull().default(sql`'{}'::alert_channel[]`),
+    attempts: integer().notNull().default(0),
+    error: text(),
+    createdAt: createdAt(),
+    sentAt: timestamptz(),
+  },
+  (t) => [
+    unique("alert_deliveries_once").on(t.watchlistId, t.anchorItemId, t.kind),
+    index("alert_deliveries_pending_idx").on(t.status, t.createdAt),
+    index("alert_deliveries_created_idx").on(t.createdAt.desc()),
+  ],
+);
