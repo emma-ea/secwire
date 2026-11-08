@@ -90,7 +90,16 @@ export function searchAsCveId(q: string | null): string | null {
 // Postgres text (timestamps keep microseconds, numerics stay exact).
 // ---------------------------------------------------------------------------
 
-const ts = z.string().min(10).max(40);
+/** Postgres timestamptz text, e.g. "2026-11-08 10:15:00.123456+00". Anything else would fail the ::timestamptz cast. */
+const ts = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)$/)
+  .refine((v) => {
+    // To JS ISO form ("+00" → "+00:00", microseconds trimmed) and check it's a real instant.
+    const iso = v.replace(" ", "T").replace(/(\.\d{3})\d+/, "$1").replace(/([+-]\d{2})$/, "$1:00");
+    const d = new Date(iso);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso.slice(0, 10);
+  });
 const num = z.string().regex(/^-?\d+(\.\d+)?$/).max(40);
 const uuid = z.uuid();
 
