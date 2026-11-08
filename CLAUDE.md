@@ -24,6 +24,9 @@ pnpm dev / pnpm dev:worker       # either one alone
 pnpm ingest --all --wait         # enqueue all enabled sources, wait for results (see scripts/ingest.ts for flags)
 pnpm ingest --source <id> --inline | --dry-run | --force
 pnpm backfill:hn --since YYYY-MM-DD
+pnpm enrich --cve CVE-2026-12345 [--inline|--wait]   # NVD + EPSS for one CVE
+pnpm enrich --stale [--inline|--wait]                # the daily refresh, now
+pnpm recluster --since YYYY-MM-DD [--inline|--wait]
 
 pnpm typecheck                   # next typegen && tsc --noEmit (typegen creates LayoutProps/PageProps/RouteContext globals)
 pnpm lint
@@ -53,12 +56,16 @@ docker compose --profile app up --build      # full stack in containers (migrate
 
 **Run bookkeeping.** Every trigger creates an `ingestion_runs` row plus one `ingestion_run_sources` row per source (`src/ingest/runs.ts`). The source rows move from `queued`/`running` to a terminal status, and whoever writes the last result finalizes the run (`finalizeRun`, which holds a row lock). These rows are also the arbiter for cancel: flip the row first, then cancel the job.
 
+**Enrichment and clustering (Phase 2).** After `runSource` commits, `afterIngest` (`src/ingest/hooks.ts`) enqueues `cluster.items` and one `enrich.cve` per item-linked CVE that NVD hasn't been asked about yet. KEV catalog-only CVEs are deliberately never auto-enriched. `enrich.cve` runs at concurrency 1 behind the in-process NVD throttle (`src/ingest/enrich/throttle.ts`). `src/ingest/cluster.ts` implements the §6.5 rules and `recluster`. `src/ingest/stories.ts` `refreshStories()` is the **only** code that computes a story's denormalized fields (counts, times, `story_cves`, badges, vendors, title). Every writer of story rows takes the `secwire:stories` advisory lock (`lockStories`). Enrich and recluster runs are `ingestion_runs` rows with no per-source rows; `src/ingest/trigger-jobs.ts` creates them, used by the CLI, admin API and Server Actions alike. Recluster jobs use `singletonKey: "recluster"` so a queued pipeline cluster job can't swallow them.
+
+**Read side.** Public pages (`/`, `/story/[id]`, `/cve/[id]`) query through `src/feed/queries.ts`. `src/feed/params.ts` is pure: it parses URL filters and encodes/validates keyset cursors, whose values are kept as Postgres text so timestamps keep microseconds.
+
 **Job handlers** live in `src/ingest/handlers.ts` and are thin. `worker/index.ts` only wires them to queues, which is why integration tests can call `handleTick` and `handleSourceJob` directly.
 
 ### Conventions that span files
 
 - **Env is checked when first used, not at import time.** Call `getEnv()` from `src/env.ts`; never read `process.env` directly. The web server checks the env at boot in `src/instrumentation.ts`, and the worker and scripts check it on startup. This keeps `next build` from needing secrets.
-- **DB access:** use `getDb()` / `getPool()` from `src/db/client.ts`. They are lazy singletons cached on `globalThis` so they survive dev hot reloads. Long-running scripts call `closeDb()` when finished.
+- **DB access:** use `getDb()` / `getPool()` from `src/db/client.ts`. They are lazy singletons cached on `globalThis` so they survive dev hot reloads. Long-running scripts call `closeDb()` when finished. SQL-heavy modules (clustering, story refresh, feed queries) use raw `pg` through `withTransaction()` / `Queryable`, because node-postgres passes JS arrays as Postgres arrays. Drizzle's `sql` template would spread them into separate params. Drizzle's `execute()` returns timestamps as strings; raw `pg` returns `Date`.
 - **Column naming:** columns are camelCase in TypeScript and snake_case in SQL through Drizzle's `casing: "snake_case"`. That option must stay set in **both** `drizzle.config.ts` and `src/db/client.ts`. Raw `sql` strings use snake_case names.
 - **Every page renders per request.** `cacheComponents` is off and the root layout calls `await connection()`, because `proxy.ts` sets a per-request nonce CSP (production: no `unsafe-inline`/`unsafe-eval`). Never add inline `<script>`, and don't use `style={...}` attributes in production paths; use Tailwind classes. Route handlers that read the DB call `await connection()` too.
 - **Adapters** (`src/ingest/adapters/`) are pure: they fetch through an injectable `fetcher` (default `safeFetch`) and return `NormalizedItem[]` (plus `cves` for KEV). They never touch the DB; `runSource` persists. Tests pass `fetcher: fakeFetcher(...)` (`tests/helpers/fake-fetch.ts`) with files from `tests/fixtures/`, so no test touches the network. `runSource`, `triggerIngestion({inline})` and `handleSourceJob` all accept the same `fetcher` seam.
@@ -73,5 +80,6 @@ docker compose --profile app up --build      # full stack in containers (migrate
   - Every outbound fetch goes through `src/lib/safe-fetch.ts`, which applies the SSRF guard on each redirect hop.
   - Feed content is rendered as plain text only; never use `dangerouslySetInnerHTML` on it.
   - Public error responses never include internal error details.
-- `enrich` and `recluster` in `package.json` are stubs that exit 1 until Phase 2.
+- **Tests that enrich** pass `throttle: new Throttle(0, realClock, { initial: 1, max: 1 })` and a `fakeFetcher` serving `tests/fixtures/nvd-*.json` / `epss-batch.json`, so they never sleep or hit the network.
+- **Dev server reload loop:** if every page reloads endlessly in `pnpm dev` (Turbopack HMR keeps sending `restart`), stop the dev server, delete `.next`, and start it again.
 - `DECISIONS.md` ends with a table mapping every SPEC §7.4 scenario to its test or manual check. Keep it current when behavior changes.

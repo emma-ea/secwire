@@ -262,6 +262,126 @@ the spec, or where something was deliberately deferred. Newest phase at the bott
   inflected forms such as "Breached" don't match `breach`. Admins can add terms to
   `config.queries`.
 
+### Data model (migration 0003)
+- **`items.activity_at`** is a generated column: `LEAST(published_at, fetched_at)`.
+  `LEAST` skips NULLs, so an undated item uses `fetched_at`, and a future-dated
+  entry is clamped to when it was fetched. Clustering order, the cluster window
+  and story times (`first_seen_at`, `last_activity_at`) all use it.
+- **Extra denormalized story columns:** `max_epss_percentile` and
+  `has_ransomware` (for the badges), plus `cve_ids`, `vendors` and `source_ids`
+  arrays (for display and the source/vendor filters). `source_ids` has a GIN index.
+  `refreshStories()` is the only place that computes them.
+- **Extra CVE columns:** `nvd_status`, `nvd_vendor`, `nvd_product` and `cwe_ids`.
+  Vendor and product come from NVD's CNA `affected` block, which has
+  human-readable names ("Palo Alto Networks"), and fall back to the first
+  vulnerable CPE. Placeholder vendors ("Unknown", "n/a") count as unknown. For
+  display, the KEV vendor wins over NVD's.
+- **Sort indexes match the keyset expressions.** The risk sort orders by
+  `coalesce(max_epss, -1)` and `coalesce(max_cvss, -1)`, so the cursor
+  comparison and the index use the same expressions.
+
+### Enrichment (SPEC §6.6)
+- **Only CVEs that items mention are enriched.** The KEV catalog adds about
+  1,800 CVEs that no item links to. Looking all of them up would take about 3
+  hours of keyless NVD quota at every refresh. The post-ingest hook enqueues
+  `enrich.cve` only for item-linked CVEs that NVD hasn't been asked about yet,
+  and the daily refresh only looks at CVEs linked to items fetched in the last
+  30 days. A CVE page still shows KEV data for catalog-only CVEs, and the admin
+  can re-enrich any CVE.
+- **Throttle:** one in-process throttle spaces NVD requests 6.5s apart without a
+  key and 0.65s apart with one, which stays under 5 and 50 per 30s. A 403, 429
+  or 503 response sets a backoff (30s, doubling to at most 5 min, reset after
+  a success) and throws, so pg-boss retries with its own backoff (`retryLimit 5`,
+  `retryDelay 60`). The throttle is per process: a CLI `--inline` enrich running
+  at the same time as the worker isn't coordinated with it. This is acceptable
+  for a developer tool.
+- **EPSS piggybacks.** Each `enrich.cve` request also carries up to 99 other
+  item-linked CVEs still missing EPSS, so most CVEs never need an EPSS request
+  of their own. An EPSS failure is recorded but doesn't fail the NVD part.
+  Every requested id gets `epss_enriched_at`, including ids EPSS doesn't score.
+- **The daily refresh** (`enrich.refresh`, 03:00 UTC, only while
+  `enrich_refresh_enabled`) selects CVEs seen in items in the last 30 days that:
+  were never enriched; or have no CVSS, are under 30 days old and weren't
+  checked in the last 12h; or have NVD data older than 7 days. It fetches EPSS
+  for every CVE seen in the last 30 days in batches of 100, and enqueues one
+  `enrich.cve` job per NVD target with `epss: false`. So the run is "succeeded"
+  once the NVD jobs are *queued*; they complete in the background.
+- **A CVE that NVD doesn't know yet** still gets `nvd_enriched_at`, as the spec
+  says. The CVE page shows "not scored yet".
+- **NVD descriptions are stored as given (trimmed)**, not passed through
+  `htmlToText`. They are plain text that can legitimately contain `<`, and the
+  UI renders them as text.
+
+### Clustering (SPEC §6.5)
+- **The window is measured from the item's own time, in both directions.** An item
+  joins a CVE-sharing story only when the story's `last_activity_at ≥
+  item.activity_at − window` and its `first_seen_at ≤ item.activity_at + window`.
+  Measuring from "now" would make the result depend on when clustering runs,
+  and `recluster` couldn't reproduce it.
+- **Ties:** candidates are ordered by `last_activity_at DESC, first_seen_at DESC,
+  id`. Two stories with identical times are vanishingly rare; if it happens, the
+  pick depends on story ids, which `recluster` regenerates.
+- **Stories are never merged.** An item whose CVEs belong to several stories joins
+  the most recently active one, and that story's `story_cves` grows (tested).
+- **Rule 1 has no time window**, as the spec says. It looks at earlier items in the
+  same batch as well as stored ones.
+- **Locking:** every writer of story rows (clustering, recluster, the story
+  refresh after enrichment) takes a transaction-level advisory lock
+  (`secwire:stories`), so they never interleave. Item assignments are written in
+  one statement per batch to keep row locks against concurrent ingestion short.
+  Incremental clustering commits every 1,000 items; `recluster` is one
+  transaction, so readers never see stories half rebuilt.
+- **`recluster --since`** releases items with `activity_at ≥ since`, recomputes
+  the stories they leave (deleting empty ones), then clusters. Idempotency is
+  tested by comparing groupings and every denormalized field across repeated
+  runs, and against a full recluster. Story ids change; the contents don't.
+- **Recluster jobs use `singletonKey: "recluster"`** on the stately
+  `cluster.items` queue. Pipeline cluster jobs have no key. Without the key, a
+  queued pipeline job would make pg-boss reject the recluster (`send()` →
+  null). With it, the recluster queues separately, and the advisory lock
+  serializes the two. A second recluster while one is queued coalesces into it
+  (its run id is returned).
+- **Self-healing:** the tick and worker startup enqueue `cluster.items` whenever
+  unassigned items exist, so a lost post-ingest enqueue can't strand items.
+
+### Enrich and recluster runs
+- **They use `ingestion_runs` with no `ingestion_run_sources` rows.** The job
+  handler sets the status and `stats` directly. Retries leave the run
+  `running`, with the attempt's error, until the final attempt. Runs stuck
+  `running` for 45 minutes are failed on the next tick, like source rows. Cancel
+  isn't offered for them, since they are a single job.
+- **Coalescing:** if pg-boss rejects the job, the response points at the run that
+  owns the queued job, and the new run row is deleted. When the queued job came
+  from the pipeline and has no run, the new run is kept, marked succeeded with
+  `{coalesced: true}`.
+- **Pipeline `enrich.cve` jobs (from ingestion and the refresh) create no runs.**
+  There would be one per CVE. The worker logs each one, and the dashboard shows
+  the NVD/EPSS backlog instead.
+
+### Feed (SPEC §8)
+- **Time range filters on `last_activity_at`.** The default is 7 days, so the
+  feed is "what's active".
+- **Full-text search** matches stories with *any* item whose `search_vector`
+  matches `websearch_to_tsquery('english', q)`. A query that is exactly a CVE
+  id matches through `story_cves` instead.
+- **The vendor filter** is a case-insensitive substring match on the story's
+  vendor names, with `%`/`_` escaped, plus a datalist of recent vendors. The
+  category filter matches stories with at least one item from that category.
+- **Cursors** are opaque base64url JSON holding the sort's key values as Postgres
+  text (microsecond timestamps and exact numerics round-trip). They are
+  validated strictly; a malformed cursor, or one from another sort, shows the
+  first page. Pagination only moves forward ("Next page", "First page").
+- **Filters are a GET form** (`next/form`). The feed works without JavaScript; with
+  JavaScript, selects apply as soon as they change. Empty fields appear as
+  empty params in the URL and are ignored.
+
+### Dev environment note
+- On 2026-11-08 the dev server got stuck in a reload loop on every page:
+  Turbopack sent an HMR `restart` for the main chunk list on each connection.
+  Committed code reproduced it too, so it wasn't caused by app code. Deleting
+  `.next` and restarting `pnpm dev` fixed it. If pages keep reloading in dev, try
+  that first.
+
 ### SPEC §7.4 scenario coverage
 Automated tests are in `tests/integration/*` (they need `docker compose up -d db`)
 and `tests/*.test.ts`. Manual checks were run on 2026-11-08 against the dev stack.
@@ -282,7 +402,7 @@ and `tests/*.test.ts`. Manual checks were run on 2026-11-08 against the dev stac
 | Source hangs | test: `safe-fetch.test.ts` timeout. Config: job `expireInSeconds: 600`, `retryLimit: 2`, backoff; retry path in "throws for pg-boss to retry…" |
 | Admin cancels a run | tests: "cancels queued jobs…" and "running jobs finish normally" |
 | KEV first sync | test: "loads the whole catalog… only recent entries become items"; live: 1,769 CVEs, 13 items |
-| Recluster during ingestion | Phase 2 (`cluster.items` queue) |
+| Recluster during ingestion | test: `enrich.test.ts` "recluster queues behind clustering instead of being swallowed by a queued pipeline job". Clustering and recluster serialize on the story advisory lock |
 | Interval change while a scheduled run is in progress | by design: jobs already enqueued are unaffected, and the schedule row changes for the next cron boundary |
 | Admin raises interval (15 → 60), no burst | test: "raising the interval (15 → 60) causes no burst" |
 | Admin pauses the scheduler | tests: "pausing removes the tick schedule" and "also cancel queued scheduled jobs…". Chrome: banner shown, schedule row removed, kept after worker restart |
@@ -293,7 +413,21 @@ and `tests/*.test.ts`. Manual checks were run on 2026-11-08 against the dev stac
 | Next tick while previous still enqueuing | `exclusive` policy on `ingest.tick` (see above) |
 | `WORKER_SCHEDULES_ENABLED=false` | manual: worker started with it set and `pgboss.schedule` went empty; UI disables the panel (`managedExternally`) |
 
-Also checked by hand:
+Phase 2, checked by hand on 2026-11-08 against the dev stack:
+- `pnpm recluster --since 2020-01-01 --inline` clustered 214 real items into 207
+  stories. All 6 multi-item stories share a CVE; for example, SonicWall's
+  CVE-2026-19868 joins its KEV entry and a SecurityWeek article.
+- `pnpm enrich --stale` queued NVD for the 27 item-linked CVEs and scored EPSS
+  for all of them in a single request. The worker drained the NVD jobs at 6.5s
+  spacing, and a SQL check found 0 of 207 stories whose
+  `max_cvss`/`has_kev`/`max_epss`/`item_count` differ from their CVEs and items.
+- In Chrome: risk sort, search, KEV filter, story page, CVE page (a lowercase
+  id redirects), admin "Re-enrich" (run succeeded, story refreshed) and "Recluster
+  since 2026-11-01" (125 items released, the same 121 stories rebuilt).
+- The new admin routes return 403 without a matching Origin and 401 without a
+  session.
+
+Also checked by hand (Phase 1):
 - A fresh install schedules `*/15 * * * *`.
 - Changing the interval in the panel rewrote the schedule to `0 */1 * * *` with no
   restart.
