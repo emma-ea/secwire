@@ -1,0 +1,22 @@
+# Phase 0: database only. The web, worker and one-off migrate services
+# (same image, different commands) are added in Phase 1 — see DECISIONS.md.
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: secwire
+      POSTGRES_PASSWORD: secwire
+      POSTGRES_DB: secwire
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secwire -d secwire"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
