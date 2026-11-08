@@ -1,0 +1,51 @@
+{
+  "name": "secwire",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "dev:worker": "tsx watch --env-file-if-exists=.env worker/index.ts",
+    "dev:all": "concurrently -k -n web,worker -c blue,magenta \"pnpm dev\" \"pnpm dev:worker\"",
+    "build": "next build",
+    "start": "next start",
+    "start:worker": "tsx --env-file-if-exists=.env worker/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
+    "db:seed": "echo 'db:seed is implemented in Phase 1' && exit 1",
+    "ingest": "echo 'ingest is implemented in Phase 1' && exit 1",
+    "enrich": "echo 'enrich is implemented in Phase 2' && exit 1",
+    "recluster": "echo 'recluster is implemented in Phase 2' && exit 1",
+    "backfill:hn": "echo 'backfill:hn is implemented in Phase 1' && exit 1",
+    "test": "vitest run",
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "next": "16.4.5",
+    "pg": "^8.23.1",
+    "pg-boss": "^12.38.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^10.0.7",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.5",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.1.0"
+  },
+  "packageManager": "pnpm@10.34.9"
+}
