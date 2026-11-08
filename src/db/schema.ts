@@ -144,26 +144,41 @@ export const stories = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     title: text().notNull(),
+    /** min(items.activity_at) */
     firstSeenAt: timestamptz().notNull(),
+    /** max(items.activity_at) */
     lastActivityAt: timestamptz().notNull(),
     itemCount: integer().notNull().default(0),
     maxCvss: numeric({ precision: 3, scale: 1, mode: "number" }),
     hasKev: boolean().notNull().default(false),
     maxEpss: numeric({ mode: "number" }),
     summary: text(),
+    // Denormalized for the feed (Phase 2, migration 0003). Recomputed by
+    // refreshStories() whenever items join or linked CVEs are enriched.
+    maxEpssPercentile: numeric({ mode: "number" }),
+    hasRansomware: boolean().notNull().default(false),
+    /** Sorted CVE ids (mirrors story_cves) for display without a join. */
+    cveIds: text().array().notNull().default(sql`'{}'::text[]`),
+    /** Distinct vendor names from KEV, else NVD. */
+    vendors: text().array().notNull().default(sql`'{}'::text[]`),
+    sourceIds: text().array().notNull().default(sql`'{}'::text[]`),
   },
   (t) => [
     // Default sort + cursor pagination on (last_activity_at, id).
     index("stories_last_activity_idx").on(t.lastActivityAt.desc(), t.id.desc()),
     index("stories_first_seen_idx").on(t.firstSeenAt),
-    // "Most covered" sort.
-    index("stories_item_count_idx").on(t.itemCount.desc(), t.lastActivityAt.desc()),
-    // "Highest risk" sort.
+    // "Most covered" sort (keyset: item_count, last_activity_at, id).
+    index("stories_item_count_idx").on(t.itemCount.desc(), t.lastActivityAt.desc(), t.id.desc()),
+    // "Highest risk" sort (keyset over the same expressions the feed orders by).
     index("stories_risk_idx").on(
       t.hasKev.desc(),
-      t.maxEpss.desc().nullsLast(),
-      t.maxCvss.desc().nullsLast(),
+      sql`coalesce(${t.maxEpss}, -1) DESC`,
+      sql`coalesce(${t.maxCvss}, -1) DESC`,
+      t.lastActivityAt.desc(),
+      t.id.desc(),
     ),
+    // "Specific source" filter.
+    index("stories_source_ids_idx").using("gin", t.sourceIds),
   ],
 );
 
@@ -184,6 +199,14 @@ export const items = pgTable(
     fetchedAt: timestamptz().notNull().defaultNow(),
     storyId: uuid().references(() => stories.id, { onDelete: "set null" }),
     raw: jsonb(),
+    /**
+     * When the item "happened": published_at, clamped to fetched_at so a
+     * future-dated entry can't pin a story to the top. LEAST ignores NULLs, so
+     * an undated item uses fetched_at. Clustering and story times use this.
+     */
+    activityAt: timestamptz()
+      .notNull()
+      .generatedAlwaysAs((): SQL => sql`LEAST(${items.publishedAt}, ${items.fetchedAt})`),
     searchVector: tsvector().generatedAlwaysAs(
       (): SQL =>
         sql`to_tsvector('english', coalesce(${items.title}, '') || ' ' || coalesce(${items.excerpt}, ''))`,
@@ -197,11 +220,13 @@ export const items = pgTable(
       sql`${t.excerpt} IS NULL OR char_length(${t.excerpt}) <= 400`,
     ),
     index("items_canonical_url_hash_idx").on(t.canonicalUrlHash),
-    index("items_story_id_idx").on(t.storyId),
     // Clustering scans unassigned items oldest-first.
     index("items_unclustered_idx")
-      .on(t.fetchedAt)
+      .on(t.activityAt, t.id)
       .where(sql`${t.storyId} IS NULL`),
+    // recluster --since and story pages.
+    index("items_activity_idx").on(t.activityAt),
+    index("items_story_activity_idx").on(t.storyId, t.activityAt),
     index("items_source_fetched_idx").on(t.sourceId, t.fetchedAt.desc()),
     index("items_published_idx").on(t.publishedAt.desc()),
     index("items_search_vector_idx").using("gin", t.searchVector),
@@ -233,12 +258,19 @@ export const cves = pgTable(
     nvdPublishedAt: timestamptz(),
     nvdEnrichedAt: timestamptz(),
     epssEnrichedAt: timestamptz(),
+    // From NVD (Phase 2, migration 0003). Vendor/product come from the CNA's
+    // "affected" data, else the first vulnerable CPE; KEV's values win for display.
+    nvdStatus: text(),
+    nvdVendor: text(),
+    nvdProduct: text(),
+    cweIds: text().array().notNull().default(sql`'{}'::text[]`),
   },
   (t) => [
     check("cves_id_format", sql`${t.id} ~ '^CVE-[0-9]{4}-[0-9]{4,7}$'`),
     index("cves_in_kev_idx").on(t.inKev).where(sql`${t.inKev}`),
     index("cves_kev_vendor_idx").on(sql`lower(${t.kevVendor})`),
     index("cves_nvd_enriched_idx").on(t.nvdEnrichedAt),
+    index("cves_epss_enriched_idx").on(t.epssEnrichedAt),
   ],
 );
 
